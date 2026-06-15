@@ -148,7 +148,6 @@ function pickRunSong(){ const a = songIdxsWhere(false); return a[Math.random() *
 function pickBossSong(){ const a = songIdxsWhere(true); return a[Math.random() * a.length | 0]; }
 let songIdx = 0, song = SONGS[0], prevSong = 0;
 let SPB = 60 / song.bpm;
-let soloIdx = 3;
 function setSong(i){
   songIdx = i; song = SONGS[i]; SPB = 60 / song.bpm;
   if (tempoDelay) tempoDelay.delayTime.value = SPB * 0.75;
@@ -216,11 +215,8 @@ function stepMusic(s, t){
   // arp sparkle on 16ths
   const ch = song.chords[bar];
   arpNote(ch[p % 3] + (p % 2 ? 12 : 0), t);
-  // lead: melody normally, a soaring anthemic power-chord lead during solo mode
-  const solo = G && G.p && G.p.soloT > 0;
-  if (solo){
-    soloStep(bar, p, t);
-  } else if (playing && p % 2 === 0){
+  // lead: the song's own melody plays throughout (OVERDRIVE keeps the normal track)
+  if (playing && p % 2 === 0){
     const n = song.melody[bar * 8 + p / 2];
     if (n) leadNote(n, t, SPB * 0.42, 0.16);
   }
@@ -268,66 +264,6 @@ function leadNote(m, t, d, v){
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + 0.015);
     g.gain.exponentialRampToValueAtTime(0.001, t + d);
     o.connect(g); g.connect(leadBus); o.start(t); o.stop(t + d + 0.02);
-  }
-}
-// snap a note to the nearest chord tone in ANY octave, so landings stay in the
-// lead's own register instead of being forced sky-high
-function chordToneNear(c, around){
-  let best = c[0], bd = Infinity;
-  for (const base of c) for (const oct of [-12, 0, 12, 24]){
-    const cand = base + oct, d = Math.abs(cand - around);
-    if (d < bd){ bd = d; best = cand; }
-  }
-  return best;
-}
-// OVERDRIVE lead: a low, menacing dark-synth line. Notes land on chord tones,
-// sit deep in the register, and the bar-end note resolves into the next chord.
-function soloStep(bar, p, t){
-  const beat = p >> 2, six = p & 3;
-  const onBeat = six === 0;
-  const pickup = six === 2 && (beat === 1 || beat === 3); // a little motion between landings
-  if (!onBeat && !pickup) return;
-  const scale = song.penta;
-  // gentle contour: rise through the first half of the bar, ease back through the second
-  if (onBeat) soloIdx += (beat < 2 ? 1 : -1) * (Math.random() < 0.65 ? 1 : 2);
-  else soloIdx += Math.random() < 0.5 ? 1 : -1;
-  soloIdx = Math.max(0, Math.min(scale.length - 1, soloIdx));
-  let m = scale[soloIdx] - 12;          // drop an octave into a dark register
-  if (m > 64) m -= 12;                   // and keep it from ever creeping up shrill
-  // land the strong beats on a real chord tone so the line sounds deliberate
-  if (onBeat && beat % 2 === 0) m = chordToneNear(song.chords[bar], m);
-  // the bar-end note is held and resolves into the next chord
-  if (onBeat && beat === 3) m = chordToneNear(song.chords[(bar + 1) % 8], m);
-  const isRoot = (((m - song.chords[bar][0]) % 12) + 12) % 12 === 0;
-  const dur = pickup ? SPB * 0.3 : beat === 3 ? SPB * 1.3 : SPB * 0.7;
-  leadStab(m, t, dur, !pickup, isRoot);
-}
-function leadStab(m, t, dur, fat, root){
-  // dark-synth voice: a filtered low saw with a square sub-octave underneath.
-  // routed dry (no bright distortion) and clamped low so it menaces, never shrieks.
-  const peak = 0.28;
-  const filt = AC.createBiquadFilter();
-  filt.type = 'lowpass'; filt.Q.value = 7;
-  filt.frequency.setValueAtTime(1800, t);                      // a brief bite on the attack
-  filt.frequency.exponentialRampToValueAtTime(620, t + 0.12);  // then it clamps down dark
-  const out = AC.createGain(); out.gain.value = 1;
-  filt.connect(out); out.connect(musicGain);
-  if (echoIn) out.connect(echoIn);                             // tempo echo, no distortion
-  const voices = [[0, peak, 'sawtooth'], [-12, peak * 0.6, 'square']]; // growl + sub
-  if (root && fat) voices.push([-5, peak * 0.4, 'sawtooth']);  // low power-chord fifth, accent
-  for (const [iv, vol, type] of voices){
-    const vd = iv === -5 ? Math.min(dur, SPB * 0.4) : dur;
-    for (const det of [-5, 5]){
-      const o = AC.createOscillator(), g = AC.createGain();
-      o.type = type; o.detune.value = det; o.frequency.value = hz(m + iv);
-      // hard attack, decay to a held sustain, release — a deliberate, mechanical pulse
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
-      g.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.16);
-      g.gain.setValueAtTime(vol * 0.5, t + vd * 0.6);
-      g.gain.exponentialRampToValueAtTime(0.001, t + vd);
-      o.connect(g); g.connect(filt); o.start(t); o.stop(t + vd + 0.06);
-    }
   }
 }
 // ---- sfx
@@ -383,7 +319,7 @@ function startRun(){
     camX: 0, maxD: 0, score: 0, meter: 0,
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
     allies: [], pods: [],
-    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200,
+    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500,
     bossOn: false, dieT: 0, line: ''
   };
   // pick a fresh soundtrack for the run (never a boss theme)
@@ -395,10 +331,10 @@ function startRun(){
   state = 'play';
   syncAudioSuspend();
 }
-function enterBoss(){
+function enterBoss(msg, col){
   if (G.bossOn) return;
   G.bossOn = true; prevSong = songIdx; setSong(pickBossSong());
-  addText(G.camX + W / 2, 130, '⚠ MID-BOSS INCOMING ⚠', '#c44dff', 2.6);
+  addText(G.camX + W / 2, 130, msg || '⚠ MID-BOSS INCOMING ⚠', col || '#c44dff', 2.6);
   shake = 12;
 }
 function exitBoss(){
@@ -427,6 +363,13 @@ function mkEnemy(type, x){
     e.phase = 'cloak'; e.pt = 2.6; e.hitT = 0; }
   if (type === 'midboss'){ e.y = GROUND; e.w = 42; e.h = 60; e.hp = 16; e.spd = 64;
     e.cd = 1.4; e.hitT = 0; e.burst = 0; e.bt = 0; }
+  if (type === 'gunship'){ e.y = 150; e.w = 150; e.h = 60; e.spd = 220;  // e.y is the hull CENTER
+    e.phase = 'enter'; e.pt = 1.6; e.cd = 0.5; e.hitT = 0; e.vtoggle = 0;
+    e.core = 24; e.coreMax = 24;  // the core is just the finisher; the turrets are the fight
+    e.turrets = [
+      { ox: -58, oy: 30, hp: 6, max: 6 }, { ox: -35, oy: 36, hp: 6, max: 6 }, { ox: -12, oy: 32, hp: 6, max: 6 },
+      { ox: 12, oy: 32, hp: 6, max: 6 }, { ox: 35, oy: 36, hp: 6, max: 6 }, { ox: 58, oy: 30, hp: 6, max: 6 }
+    ]; }
   e.maxhp = e.hp;
   return e;
 }
@@ -458,7 +401,11 @@ function genWorld(){
       g.spawnX += Math.max(170, 470 - diff * 45) + Math.random() * 250;
     }
   }
-  if (!g.bossOn && g.maxD > g.nextBoss){
+  if (!g.bossOn && g.maxD > g.nextGunship){
+    g.ens.push(mkEnemy('gunship', g.camX + W + 180));
+    g.nextGunship += 7000 + Math.random() * 3000;
+    enterBoss('⚠ WARSHIP INBOUND ⚠', '#ff5e3a');
+  } else if (!g.bossOn && g.maxD > g.nextBoss){
     g.ens.push(mkEnemy('midboss', g.camX + W + 140));
     g.nextBoss += 3200 + Math.random() * 1400;
     enterBoss();
@@ -749,10 +696,32 @@ function update(dt){
         e.bt -= dt;
         if (e.bt <= 0){ e.bt = 0.5; e.burst--; aimedSpread(e.x + e.face * 22, e.y - 40, 300, '#c44dff', 12, 3, 0.22); }
       }
+    } else if (e.type === 'gunship'){
+      e.hitT -= dt; e.pt -= dt;
+      // travels with the run: holds station ahead-right of the player
+      e.x += ((p.x + 340) - e.x) * Math.min(1, dt * 1.4);
+      const turretsLeft = e.turrets.filter(tr => tr.hp > 0).length;
+      let ty = e.y;
+      if (e.phase === 'enter'){
+        ty = 200; if (e.pt <= 0){ e.phase = 'hover'; e.pt = 3; e.cd = 0.5; }
+      } else if (e.phase === 'hover'){
+        ty = 196 + Math.sin(e.t * 1.5) * 16;        // high up, raining bombs
+        if (e.cd <= 0){ e.cd = 0.55; dropBomb(e, e.x + (Math.random() - 0.5) * 130); }
+        if (e.pt <= 0){ e.phase = 'strafe'; e.pt = 3.4; e.cd = 0.4; }
+      } else {
+        ty = 348 + Math.sin(e.t * 2) * 12;          // swoops low — the damage window
+        if (e.cd <= 0){
+          e.cd = 0.85; e.vtoggle ^= 1;              // alternating banks keep the barrage fair
+          e.turrets.forEach((tr, k) => { if (tr.hp > 0 && (k % 2) === e.vtoggle) aimedShot(e.x + tr.ox, e.y + tr.oy, 285, '#ff5e3a', 9); });
+        }
+        if (e.pt <= 0){ e.phase = 'hover'; e.pt = 3; e.cd = 0.3; g.ens.push(mkEnemy('drone', e.x)); }
+      }
+      e.y += (ty - e.y) * Math.min(1, dt * 1.6);
     }
     // contact damage
-    { const pb = pbox(); if (rectsHit(pb[0], pb[1], pb[2], pb[3], e.x, e.y - e.h / 2, e.w, e.h)) hurt(e.x); }
-    if (e.x < g.camX - 650){ if (e.type === 'midboss') exitBoss(); g.ens.splice(i, 1); }
+    { const pb = pbox(), cy = e.type === 'gunship' ? e.y : e.y - e.h / 2;
+      if (rectsHit(pb[0], pb[1], pb[2], pb[3], e.x, cy, e.w, e.h)) hurt(e.x); }
+    if (e.x < g.camX - 650){ if (e.type === 'midboss' || e.type === 'gunship') exitBoss(); g.ens.splice(i, 1); }
   }
 
   // player bullets
@@ -764,6 +733,7 @@ function update(dt){
     for (let j = g.ens.length - 1; j >= 0 && !dead; j--){
       const e = g.ens[j];
       if (b.hit[e.id]) continue;
+      if (e.type === 'gunship'){ if (hitGunship(e, j, b)) dead = true; continue; }
       if (rectsHit(b.x, b.y, b.w, b.h, e.x, e.y - e.h / 2, e.w, e.h)){
         b.hit[e.id] = 1;
         if (b.rocket){ dead = true; break; } // detonates on contact (AoE handled below)
@@ -833,6 +803,7 @@ function explodeRocket(x, y, dmg){
   const R = 95;
   for (let j = G.ens.length - 1; j >= 0; j--){
     const e = G.ens[j];
+    if (e.type === 'gunship') continue; // the gunship takes damage only on its weak points
     const ex = e.x - x, ey = (e.y - e.h / 2) - y;
     if (ex * ex + ey * ey < R * R){
       let d = dmg * 3;
@@ -842,6 +813,49 @@ function explodeRocket(x, y, dmg){
       if (e.hp <= 0) killEnemy(e, j);
     }
   }
+}
+function dropBomb(e, x){
+  G.ebul.push({ x, y: e.y + 10, vx: (Math.random() - 0.5) * 30, vy: 90, w: 11, h: 11, col: '#ff9f1c', grav: 1 });
+}
+// player bullet vs gunship: turrets first, then the exposed core. returns true if the bullet is spent.
+function hitGunship(e, j, b){
+  const turretsLeft = e.turrets.filter(tr => tr.hp > 0).length;
+  const dmg = b.rocket ? b.dmg * 3 : b.dmg;
+  for (const tr of e.turrets){
+    if (tr.hp <= 0) continue;
+    if (rectsHit(b.x, b.y, b.w, b.h, e.x + tr.ox, e.y + tr.oy, 30, 26)){
+      b.hit[e.id] = 1; e.hitT = 0.2;
+      tr.hp -= dmg; burst(b.x, b.y, 4, [b.col, '#fff'], 140);
+      if (tr.hp <= 0){
+        burst(e.x + tr.ox, e.y + tr.oy, 22, ['#ff5e3a', '#ffd23f', '#fff'], 260);
+        ring(e.x + tr.ox, e.y + tr.oy, '#ff5e3a'); sBoom(false);
+        shake = Math.min(14, shake + 5); award(e.x + tr.ox, e.y + tr.oy, 250); addShred(8);
+        if (e.turrets.every(t => t.hp <= 0)){
+          addText(e.x, e.y - 34, 'CORE EXPOSED!', '#c44dff', 1.8); shake = Math.min(16, shake + 6);
+        }
+      }
+      return b.rocket || !b.pierce;
+    }
+  }
+  if (turretsLeft === 0 && rectsHit(b.x, b.y, b.w, b.h, e.x, e.y, 50, 42)){
+    b.hit[e.id] = 1; e.hitT = 0.2;
+    e.core -= dmg; burst(b.x, b.y, 5, ['#c44dff', '#fff'], 160);
+    if (e.core <= 0) killGunship(e, j);
+    return b.rocket || !b.pierce;
+  }
+  return false;
+}
+function killGunship(e, idx){
+  G.ens.splice(idx, 1);
+  sBoom(true); shake = 18;
+  for (let k = 0; k < 6; k++) ring(e.x + (Math.random() - 0.5) * 120, e.y + (Math.random() - 0.5) * 50, ['#ff5e3a', '#ffd23f', '#c44dff', '#fff'][k % 4]);
+  burst(e.x, e.y, 80, ['#ff5e3a', '#ffd23f', '#c44dff', '#fff'], 420);
+  award(e.x, e.y, 5000); addShred(100);
+  G.picks.push(mkPick('hp', e.x - 40, GROUND - 30));
+  G.picks.push(mkPick('shield', e.x, GROUND - 30));
+  G.picks.push(mkPick(randPickup(), e.x + 40, GROUND - 30));
+  addText(e.x, e.y - 30, 'WARSHIP DOWN', '#ff5e3a', 2.4);
+  exitBoss();
 }
 function aimedShot(x, y, spd, col, size, plasma){
   const p = G.p;
@@ -1121,7 +1135,53 @@ function drawAlly(a){
   cx.beginPath(); cx.arc(1, -38, 5, 0, Math.PI * 2); cx.fill(); cx.stroke();
   cx.restore(); cx.shadowBlur = 0;
 }
+function drawGunship(e){
+  const x = e.x - G.camX, y = e.y;
+  if (x < -220 || x > W + 220) return;
+  const flash = e.hitT > 0;
+  const exposed = e.turrets.every(tr => tr.hp <= 0);
+  cx.save(); cx.translate(x, y);
+  cx.lineWidth = 3; cx.lineJoin = 'round'; cx.lineCap = 'round';
+  cx.strokeStyle = flash ? '#fff' : '#ff5e3a'; cx.fillStyle = '#160a16';
+  cx.shadowColor = '#ff5e3a'; cx.shadowBlur = 16;
+  // main hull
+  cx.beginPath();
+  cx.moveTo(-72, -6); cx.lineTo(-58, -24); cx.lineTo(58, -24); cx.lineTo(72, -6);
+  cx.lineTo(54, 14); cx.lineTo(-54, 14); cx.closePath(); cx.fill(); cx.stroke();
+  // bridge fin
+  cx.beginPath(); cx.moveTo(-16, -24); cx.lineTo(-8, -40); cx.lineTo(14, -40); cx.lineTo(20, -24); cx.closePath();
+  cx.fill(); cx.stroke();
+  // engine pods with flicker
+  const fl = 5 + Math.sin(tt * 30) * 3;
+  cx.fillStyle = '#ffd23f'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 14;
+  cx.fillRect(-80, -6, 8, 10); cx.fillRect(72, -6, 8, 10);
+  cx.globalAlpha = 0.5; cx.fillRect(-80 - fl, -4, fl, 6); cx.fillRect(72 + 8, -4, fl, 6); cx.globalAlpha = 1;
+  // reactor core
+  const coreCol = exposed ? '#c44dff' : '#6a2a6a';
+  cx.fillStyle = coreCol; cx.shadowColor = coreCol; cx.shadowBlur = exposed ? 20 : 8;
+  const cr = 12 + (exposed ? Math.sin(tt * 8) * 3 : 0);
+  cx.beginPath(); cx.arc(0, -4, cr, 0, Math.PI * 2); cx.fill();
+  if (!exposed){ // shield shimmer while turrets stand
+    cx.strokeStyle = `rgba(120,200,255,${0.3 + 0.2 * Math.sin(tt * 6)})`; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(0, -4, 22, 0, Math.PI * 2); cx.stroke();
+  }
+  // turrets (weak points) hanging below
+  for (const tr of e.turrets){
+    if (tr.hp > 0){
+      cx.fillStyle = flash ? '#fff' : '#ff9f1c'; cx.strokeStyle = '#ff5e3a';
+      cx.shadowColor = '#ff5e3a'; cx.shadowBlur = 8;
+      cx.fillRect(tr.ox - 9, tr.oy - 6, 18, 12); cx.fillRect(tr.ox - 2, tr.oy + 6, 4, 8);
+      cx.strokeRect(tr.ox - 9, tr.oy - 6, 18, 12);
+    } else {
+      cx.fillStyle = '#2a1418'; cx.shadowBlur = 0;
+      cx.fillRect(tr.ox - 8, tr.oy - 5, 16, 9);
+      if (((tt * 7 + tr.ox) | 0) % 2){ cx.fillStyle = '#ff9f1c'; cx.globalAlpha = 0.5; cx.fillRect(tr.ox - 3, tr.oy - 8, 5, 4); cx.globalAlpha = 1; }
+    }
+  }
+  cx.restore(); cx.shadowBlur = 0;
+}
 function drawEnemy(e){
+  if (e.type === 'gunship'){ drawGunship(e); return; }
   const x = e.x - G.camX, y = e.y;
   if (x < -80 || x > W + 80) return;
   cx.save(); cx.translate(x, y); cx.scale(e.face, 1);
@@ -1337,11 +1397,12 @@ function drawHUD(){
   cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace';
   cx.fillStyle = p.soloT > 0 ? '#ff5e3a' : 'rgba(232,228,240,.6)';
   cx.fillText(p.soloT > 0 ? '!! OVERDRIVE !!' : 'SHRED', W / 2, my - 6);
-  // mid-boss health bar
+  // boss health bar
   if (G.bossOn){
-    const boss = G.ens.find(e => e.type === 'midboss');
-    if (boss){
-      const bw = 360, bx = W / 2 - bw / 2, by = 72, f = Math.max(0, boss.hp / boss.maxhp);
+    const boss = G.ens.find(e => e.type === 'midboss' || e.type === 'gunship');
+    const bw = 360, bx = W / 2 - bw / 2, by = 72;
+    if (boss && boss.type === 'midboss'){
+      const f = Math.max(0, boss.hp / boss.maxhp);
       cx.fillStyle = 'rgba(0,0,0,.5)'; cx.fillRect(bx - 2, by - 2, bw + 4, 12);
       cx.fillStyle = '#3a1145'; cx.fillRect(bx, by, bw, 8);
       cx.fillStyle = '#c44dff'; cx.shadowColor = '#c44dff'; cx.shadowBlur = 10;
@@ -1349,6 +1410,17 @@ function drawHUD(){
       cx.strokeStyle = 'rgba(255,255,255,.4)'; cx.lineWidth = 1; cx.strokeRect(bx, by, bw, 8);
       cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace'; cx.fillStyle = '#c44dff';
       cx.fillText('◆ MID-BOSS ◆', W / 2, by - 5);
+    } else if (boss && boss.type === 'gunship'){
+      const tl = boss.turrets.filter(tr => tr.hp > 0).length, exposed = tl === 0;
+      const f = Math.max(0, boss.core / boss.coreMax);
+      cx.fillStyle = 'rgba(0,0,0,.5)'; cx.fillRect(bx - 2, by - 2, bw + 4, 12);
+      cx.fillStyle = '#3a1145'; cx.fillRect(bx, by, bw, 8);
+      cx.fillStyle = exposed ? '#ff5e3a' : 'rgba(255,94,58,.35)';
+      if (exposed){ cx.shadowColor = '#ff5e3a'; cx.shadowBlur = 10; }
+      cx.fillRect(bx, by, bw * f, 8); cx.shadowBlur = 0;
+      cx.strokeStyle = 'rgba(255,255,255,.4)'; cx.lineWidth = 1; cx.strokeRect(bx, by, bw, 8);
+      cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace'; cx.fillStyle = '#ff5e3a';
+      cx.fillText(exposed ? '◆ WARSHIP — CORE EXPOSED ◆' : '◆ WARSHIP — TURRETS ' + tl + ' ◆', W / 2, by - 5);
     }
   }
   // now-playing track
