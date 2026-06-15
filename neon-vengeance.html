@@ -280,8 +280,8 @@ function chordToneNear(c, around){
   }
   return best;
 }
-// anthemic lead: sustained notes on the beat, landings locked to chord tones,
-// a held note at the bar's end that resolves into the next chord.
+// OVERDRIVE lead: a low, menacing dark-synth line. Notes land on chord tones,
+// sit deep in the register, and the bar-end note resolves into the next chord.
 function soloStep(bar, p, t){
   const beat = p >> 2, six = p & 3;
   const onBeat = six === 0;
@@ -292,41 +292,41 @@ function soloStep(bar, p, t){
   if (onBeat) soloIdx += (beat < 2 ? 1 : -1) * (Math.random() < 0.65 ? 1 : 2);
   else soloIdx += Math.random() < 0.5 ? 1 : -1;
   soloIdx = Math.max(0, Math.min(scale.length - 1, soloIdx));
-  let m = scale[soloIdx];
+  let m = scale[soloIdx] - 12;          // drop an octave into a dark register
+  if (m > 64) m -= 12;                   // and keep it from ever creeping up shrill
   // land the strong beats on a real chord tone so the line sounds deliberate
   if (onBeat && beat % 2 === 0) m = chordToneNear(song.chords[bar], m);
-  // the bar-end note is held long and resolves into the next chord (the anthem lift)
+  // the bar-end note is held and resolves into the next chord
   if (onBeat && beat === 3) m = chordToneNear(song.chords[(bar + 1) % 8], m);
   const isRoot = (((m - song.chords[bar][0]) % 12) + 12) % 12 === 0;
   const dur = pickup ? SPB * 0.3 : beat === 3 ? SPB * 1.3 : SPB * 0.7;
   leadStab(m, t, dur, !pickup, isRoot);
 }
 function leadStab(m, t, dur, fat, root){
-  // a single screaming lead voice (detuned saw pair) with a snappy picked attack.
-  // on root landings a short power-chord fifth stabs in for punch — never a drone.
-  const peak = 0.26;
-  const voices = [[0, peak]];
-  if (root && fat) voices.push([7, peak * 0.5]); // power-chord fifth, accent only
-  // delayed vibrato: the note starts dead-on (pick attack) and only wobbles if held
-  const lfo = AC.createOscillator(), lg = AC.createGain();
-  lfo.type = 'sine'; lfo.frequency.value = 5.6;
-  lg.gain.setValueAtTime(0, t);
-  lg.gain.setValueAtTime(0, t + 0.16);
-  lg.gain.linearRampToValueAtTime(7, t + 0.42);
-  lfo.connect(lg); lfo.start(t); lfo.stop(t + dur + 0.06);
-  for (const [iv, vol] of voices){
-    const vd = iv === 7 ? Math.min(dur, SPB * 0.38) : dur; // the fifth is a stab, not a pad
-    for (const det of [-7, 7]){
+  // dark-synth voice: a filtered low saw with a square sub-octave underneath.
+  // routed dry (no bright distortion) and clamped low so it menaces, never shrieks.
+  const peak = 0.28;
+  const filt = AC.createBiquadFilter();
+  filt.type = 'lowpass'; filt.Q.value = 7;
+  filt.frequency.setValueAtTime(1800, t);                      // a brief bite on the attack
+  filt.frequency.exponentialRampToValueAtTime(620, t + 0.12);  // then it clamps down dark
+  const out = AC.createGain(); out.gain.value = 1;
+  filt.connect(out); out.connect(musicGain);
+  if (echoIn) out.connect(echoIn);                             // tempo echo, no distortion
+  const voices = [[0, peak, 'sawtooth'], [-12, peak * 0.6, 'square']]; // growl + sub
+  if (root && fat) voices.push([-5, peak * 0.4, 'sawtooth']);  // low power-chord fifth, accent
+  for (const [iv, vol, type] of voices){
+    const vd = iv === -5 ? Math.min(dur, SPB * 0.4) : dur;
+    for (const det of [-5, 5]){
       const o = AC.createOscillator(), g = AC.createGain();
-      o.type = 'sawtooth'; o.detune.value = det; o.frequency.value = hz(m + iv);
-      lg.connect(o.detune);
-      // picked-guitar envelope: fast attack, decay to a sustain, then release
+      o.type = type; o.detune.value = det; o.frequency.value = hz(m + iv);
+      // hard attack, decay to a held sustain, release — a deliberate, mechanical pulse
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
-      g.gain.exponentialRampToValueAtTime(vol * 0.55, t + 0.14);
-      g.gain.setValueAtTime(vol * 0.55, t + vd * 0.6);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.16);
+      g.gain.setValueAtTime(vol * 0.5, t + vd * 0.6);
       g.gain.exponentialRampToValueAtTime(0.001, t + vd);
-      o.connect(g); g.connect(leadBus); o.start(t); o.stop(t + vd + 0.06);
+      o.connect(g); g.connect(filt); o.start(t); o.stop(t + vd + 0.06);
     }
   }
 }
@@ -355,12 +355,16 @@ function sBoom(big){
 function sShield(){ sweep('sine', 320, 1200, 0.18, 0.16); sweep('triangle', 640, 240, 0.22, 0.1); }
 function sShieldHit(){ sweep('triangle', 900, 180, 0.18, 0.2); }
 function sRocket(){ sweep('square', 180, 520, 0.18, 0.12); }
+function sMech(){ sweep('sawtooth', 90, 360, 0.35, 0.2); sweep('square', 420, 110, 0.4, 0.12); }
+function sMechHit(){ sweep('square', 420, 90, 0.16, 0.22); }
 function sSolo(){
-  sweep('sawtooth', 220, 1760, 0.55, 0.2);
+  // a deep, menacing surge instead of a shrill rising sweep
+  sweep('sawtooth', 70, 240, 0.6, 0.24);
+  sweep('square', 150, 60, 0.6, 0.14);
   if (AC && AC.state === 'running'){
     const t = AC.currentTime, n = noiseSrc(t, 0.6), f = AC.createBiquadFilter(), g = AC.createGain();
-    f.type = 'bandpass'; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(6000, t + 0.55);
-    g.gain.setValueAtTime(0.001, t); g.gain.linearRampToValueAtTime(0.25, t + 0.4); g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    f.type = 'lowpass'; f.frequency.setValueAtTime(1600, t); f.frequency.exponentialRampToValueAtTime(180, t + 0.6);
+    g.gain.setValueAtTime(0.28, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
     n.connect(f); f.connect(g); g.connect(sfxGain);
   }
 }
@@ -374,10 +378,12 @@ function startRun(){
   G = {
     p: { x: 120, y: GROUND, vx: 0, vy: 0, onGround: true, jumps: 0, facing: 1,
          hp: 4, iframes: 0, fireCd: 0, flash: 0, animT: 0, dropT: 0,
-         weapon: 'std', weaponT: 0, soloT: 0, shield: 0, shieldT: 0 },
+         weapon: 'std', weaponT: 0, soloT: 0, shield: 0, shieldT: 0,
+         mech: 0, mechT: 0 },
     camX: 0, maxD: 0, score: 0, meter: 0,
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
-    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200,
+    allies: [], pods: [],
+    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200,
     bossOn: false, dieT: 0, line: ''
   };
   // pick a fresh soundtrack for the run (never a boss theme)
@@ -462,7 +468,19 @@ function genWorld(){
     g.nextStalker += 2600;
     addText(g.camX + W / 2, 160, 'SOMETHING IS HUNTING YOU', '#b6ff3b', 2.4);
   }
+  // ally drop: a teammate up on a high ledge with a mech parked beside them
+  if (!g.bossOn && g.maxD > g.nextAlly){
+    const bx = g.camX + W + 220;
+    g.plats.push({ x: bx - 132, y: 372, w: 92 });  // a step to make the climb fair
+    g.plats.push({ x: bx, y: 326, w: 174 });        // the high ledge with the prize
+    g.allies.push({ x: bx + 122, y: 326, t: Math.random() * 9 });
+    g.pods.push({ x: bx + 58, y: 326, t: Math.random() * 9 });
+    g.nextAlly += 6500 + Math.random() * 3500;
+    addText(bx + 60, 326 - 78, 'ALLY · MECH READY', '#7df9ff', 2.6);
+  }
   g.plats = g.plats.filter(pl => pl.x + pl.w > g.camX - 400);
+  g.allies = g.allies.filter(a => a.x > g.camX - 500);
+  g.pods = g.pods.filter(po => po.x > g.camX - 500);
 }
 
 function addText(x, y, s, col, life){ G.texts.push({ x, y, s, col, life: life || 1.2, max: life || 1.2 }); }
@@ -476,6 +494,8 @@ function burst(x, y, n, cols, spd){
   if (G.parts.length > 420) G.parts.splice(0, G.parts.length - 420);
 }
 function ring(x, y, col){ G.parts.push({ x, y, vx: 0, vy: 0, life: 0.35, max: 0.35, size: 6, col, ring: 1, grav: 0 }); }
+// pulsing red-to-orange used for OVERDRIVE accents (replaces the old rainbow)
+function soloCol(){ return `hsl(${(tt * 40) % 26 | 0} 100% ${56 + 12 * Math.sin(tt * 12) | 0}%)`; }
 
 function mult(){ const p = G.p; return p.soloT > 0 ? 4 : G.meter >= 60 ? 2 : 1; }
 function award(x, y, base){
@@ -490,7 +510,7 @@ function addShred(n){
   if (G.meter >= 100){
     p.soloT = 8; G.meter = 100;
     sSolo();
-    addText(p.x, p.y - 90, 'GUITAR SOLO!!', '#ffd23f', 1.8);
+    addText(p.x, p.y - 90, 'OVERDRIVE!!', '#ff5e3a', 1.8);
     shake = 10;
   }
 }
@@ -504,6 +524,13 @@ function tryJump(){
 function hurt(fromX){
   const p = G.p;
   if (p.iframes > 0 || p.soloT > 0) return;
+  if (inMech()){
+    p.mech--; p.iframes = 0.6; shake = 7; sMechHit();
+    p.vx = p.x < fromX ? -120 : 120;
+    burst(p.x, p.y - 30, 12, ['#ffd23f', '#ff9f1c', '#fff'], 220);
+    if (p.mech <= 0) ejectMech();
+    return;
+  }
   if (p.shield > 0){
     p.shield--; p.iframes = 0.7; shake = 6; sShieldHit();
     p.vx = p.x < fromX ? -150 : 150;
@@ -559,6 +586,13 @@ function fire(){
   const solo = p.soloT > 0;
   const gx = p.x + p.facing * 32, gy = p.y - 31;
   const dmg = solo ? 2 : 1;
+  if (inMech()){
+    p.fireCd = (solo ? 0.08 : 0.14);
+    for (const oy of [-46, -26])
+      G.pbul.push({ x: p.x + p.facing * 40, y: p.y + oy, vx: 780 * p.facing, vy: 0, w: 18, h: 6, dmg: dmg * 3, col: '#ffd23f', life: 1, hit: {} });
+    p.flash = 0.06; sShoot();
+    return;
+  }
   if (p.weapon === 'laser'){
     p.fireCd = (solo ? 0.1 : 0.26);
     G.pbul.push({ x: gx, y: gy, vx: 820 * p.facing, vy: 0, w: 26, h: 5, dmg: dmg * 3, pierce: 1, col: '#b6ff3b', life: 1.1, hit: {} });
@@ -586,6 +620,42 @@ function fire(){
   if (solo && G.pbul.length) G.pbul[G.pbul.length - 1].rainbow = 1;
 }
 
+// ---- mech: same controls, more power and armor, on a timer
+const MECH_ARMOR = 6, MECH_TIME = 12;
+function inMech(){ return G.p.mechT > 0; }
+// player hitbox grows while piloting the mech
+function pbox(){ const p = G.p; return inMech() ? [p.x, p.y - 30, 42, 64] : [p.x, p.y - 22, 24, 44]; }
+function enterMech(){
+  const p = G.p;
+  p.mech = MECH_ARMOR; p.mechT = MECH_TIME; p.iframes = Math.max(p.iframes, 0.3);
+  sMech(); shake = 9;
+  burst(p.x, p.y - 30, 22, ['#ffd23f', '#19e3ff', '#fff'], 260);
+  ring(p.x, p.y - 30, '#ffd23f');
+  addText(p.x, p.y - 92, 'MECH ONLINE', '#ffd23f', 1.6);
+}
+function ejectMech(){
+  const p = G.p;
+  p.mech = 0; p.mechT = 0; p.iframes = Math.max(p.iframes, 1);
+  sBoom(false); shake = 9;
+  burst(p.x, p.y - 30, 26, ['#ffd23f', '#19e3ff', '#fff'], 300);
+  ring(p.x, p.y - 30, '#19e3ff');
+  addText(p.x, p.y - 80, 'MECH OFFLINE', '#19e3ff', 1.2);
+}
+// heavy landing: grounded enemies near the impact take a hit
+function mechSlam(){
+  const p = G.p;
+  shake = Math.min(14, shake + 7); sBoom(false);
+  burst(p.x, GROUND, 18, ['#ffd23f', '#19e3ff', '#fff'], 240); ring(p.x, GROUND, '#ffd23f');
+  for (let j = G.ens.length - 1; j >= 0; j--){
+    const e = G.ens[j];
+    if (Math.abs(e.x - p.x) < 92 && e.y >= GROUND - 2){
+      e.hp -= 4;
+      if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
+      if (e.hp <= 0) killEnemy(e, j);
+    }
+  }
+}
+
 // ============================================================ update
 function update(dt){
   const g = G, p = g.p;
@@ -602,14 +672,16 @@ function update(dt){
   // player
   p.animT += dt; p.fireCd -= dt; p.iframes -= dt; p.flash -= dt; p.dropT -= dt;
   if (p.soloT > 0) p.soloT -= dt;
-  if (p.weaponT > 0){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
+  if (p.mechT > 0){ p.mechT -= dt; if (p.mechT <= 0) ejectMech(); }
+  // the carried weapon's clock pauses while piloting, so you don't waste it
+  if (p.weaponT > 0 && !inMech()){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
   if (p.shield > 0){ p.shieldT -= dt; if (p.shieldT <= 0){ p.shield = 0; addText(p.x, p.y - 70, 'SHIELD OUT', '#19e3ff', 1); } }
   let tvx = 0;
   if (down(LEFT)){ tvx = -250; p.facing = -1; }
   if (down(RIGHT)){ tvx = 250; p.facing = 1; }
   p.vx += (tvx - p.vx) * Math.min(1, dt * 10);
   p.vy += 1750 * dt;
-  const prevY = p.y;
+  const prevY = p.y, prevOnGround = p.onGround, fallV = p.vy;
   p.x += p.vx * dt; p.y += p.vy * dt;
   p.x = Math.max(g.maxD - 520 + 120, p.x);
   p.onGround = false;
@@ -621,6 +693,8 @@ function update(dt){
       }
     }
   }
+  // mech stomp: a hard landing shakes the ground and crushes anything under it
+  if (inMech() && !prevOnGround && p.onGround && fallV > 520) mechSlam();
   if (down(FIRE)) fire();
   // camera + distance
   g.camX += (p.x - 300 - g.camX) * Math.min(1, dt * 7);
@@ -677,7 +751,7 @@ function update(dt){
       }
     }
     // contact damage
-    if (rectsHit(p.x, p.y - 22, 24, 44, e.x, e.y - e.h / 2, e.w, e.h)) hurt(e.x);
+    { const pb = pbox(); if (rectsHit(pb[0], pb[1], pb[2], pb[3], e.x, e.y - e.h / 2, e.w, e.h)) hurt(e.x); }
     if (e.x < g.camX - 650){ if (e.type === 'midboss') exitBoss(); g.ens.splice(i, 1); }
   }
 
@@ -715,9 +789,9 @@ function update(dt){
       if (Math.abs(p.x - b.x) < 46 && p.y > GROUND - 50) hurt(b.x);
       g.ebul.splice(i, 1); continue;
     }
-    if (rectsHit(b.x, b.y, b.w, b.h, p.x, p.y - 22, 24, 44)){
+    { const pb = pbox(); if (rectsHit(b.x, b.y, b.w, b.h, pb[0], pb[1], pb[2], pb[3])){
       hurt(b.x); g.ebul.splice(i, 1); continue;
-    }
+    } }
     if (b.x < g.camX - 60 || b.x > g.camX + W + 60 || b.y < -40) g.ebul.splice(i, 1);
   }
   // pickups
@@ -739,6 +813,17 @@ function update(dt){
       g.picks.splice(i, 1);
     } else if (k.x < g.camX - 500) g.picks.splice(i, 1);
   }
+  // mech pods — climb to one and step in to pilot it (no magnet; it stays parked)
+  for (let i = g.pods.length - 1; i >= 0; i--){
+    const po = g.pods[i];
+    po.t += dt;
+    const pb = pbox();
+    if (!inMech() && rectsHit(po.x, po.y - 28, 46, 56, pb[0], pb[1], pb[2], pb[3])){
+      enterMech(); g.pods.splice(i, 1);
+    }
+  }
+  // allies just wave you over; advance their idle animation
+  for (const a of g.allies) a.t += dt;
   updateFx(dt);
 }
 function explodeRocket(x, y, dmg){
@@ -904,6 +989,7 @@ function drawPlat(pl, camX){
 function drawHero(){
   const p = G.p;
   if (state === 'dying' || state === 'dead') return;
+  if (inMech()){ drawMech(); return; }
   // energy shield bubble (drawn even while the hero blinks)
   if (p.shield > 0){
     const bx = p.x - G.camX, by = p.y - 24, fade = p.shieldT < 2 ? 0.4 + 0.6 * Math.abs(Math.sin(tt * 12)) : 1;
@@ -920,7 +1006,7 @@ function drawHero(){
   const x = p.x - G.camX, y = p.y, f = p.facing;
   const run = p.onGround && Math.abs(p.vx) > 30;
   const ph = p.animT * 12;
-  const rim = p.soloT > 0 ? `hsl(${(tt * 420) % 360} 100% 62%)` : '#19e3ff';
+  const rim = p.soloT > 0 ? soloCol() : '#19e3ff';
   cx.save(); cx.translate(x, y); cx.scale(f, 1);
   cx.lineWidth = 3; cx.lineCap = 'round';
   cx.strokeStyle = rim; cx.fillStyle = '#0d0d18';
@@ -953,6 +1039,87 @@ function drawHero(){
     cx.fill();
   }
   cx.restore();
+}
+function drawMech(){
+  const p = G.p, x = p.x - G.camX, y = p.y, f = p.facing;
+  const run = p.onGround && Math.abs(p.vx) > 30, air = !p.onGround;
+  const swing = run ? Math.sin(p.animT * 9) * 5 : 0;
+  const frac = p.mech / MECH_ARMOR;
+  const rim = frac > 0.5 ? '#19e3ff' : frac > 0.25 ? '#ffd23f' : '#ff2d55';
+  const blink = p.mechT < 2.5 && ((tt * 10) | 0) % 2; // flashes when about to expire
+  cx.save(); cx.translate(x, y); cx.scale(f, 1);
+  cx.globalAlpha = blink ? 0.55 : 1;
+  cx.lineWidth = 4; cx.lineCap = 'round'; cx.lineJoin = 'round';
+  cx.strokeStyle = rim; cx.fillStyle = '#10101e';
+  cx.shadowColor = rim; cx.shadowBlur = 14;
+  // legs + feet
+  line(-2, -22, -12 + swing, -2); cx.fillRect(-18 + swing, -4, 13, 5);
+  line(6, -22, 12 - swing, -2); cx.fillRect(7 - swing, -4, 13, 5);
+  // hull
+  cx.beginPath(); cx.moveTo(-13, -22); cx.lineTo(-15, -52); cx.lineTo(14, -55); cx.lineTo(12, -23); cx.closePath();
+  cx.fill(); cx.stroke();
+  // cockpit dome + canopy glow (the pilot inside)
+  cx.beginPath(); cx.moveTo(-6, -52); cx.lineTo(-3, -64); cx.lineTo(8, -64); cx.lineTo(10, -52); cx.closePath();
+  cx.fill(); cx.stroke();
+  cx.save(); cx.globalAlpha *= 0.6; cx.fillStyle = rim; cx.fillRect(-1, -61, 7, 5); cx.restore();
+  // shoulder + twin arm cannons
+  cx.fillStyle = rim;
+  cx.fillRect(8, -50, 11, 9); cx.fillRect(15, -48, 24, 6); cx.fillRect(15, -30, 24, 6);
+  // antenna
+  cx.strokeStyle = rim; line(-9, -54, -13, -66);
+  // thruster flare on jumps
+  if (air){
+    cx.fillStyle = '#ffd23f'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 16;
+    cx.beginPath(); cx.moveTo(-13, -2); cx.lineTo(-9, 9 + Math.random() * 6); cx.lineTo(-5, -2); cx.closePath(); cx.fill();
+    cx.beginPath(); cx.moveTo(7, -2); cx.lineTo(11, 9 + Math.random() * 6); cx.lineTo(15, -2); cx.closePath(); cx.fill();
+  }
+  // muzzle flash from both barrels
+  if (p.flash > 0){
+    cx.fillStyle = '#fff'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 20;
+    for (const my of [-45, -27]){
+      cx.beginPath(); cx.moveTo(39, my); cx.lineTo(55, my - 5); cx.lineTo(51, my); cx.lineTo(55, my + 5); cx.closePath(); cx.fill();
+    }
+  }
+  cx.globalAlpha = 1; cx.restore(); cx.shadowBlur = 0;
+}
+function drawMechPod(po){
+  const x = po.x - G.camX, y = po.y;
+  if (x < -90 || x > W + 90) return;
+  const bob = Math.sin(po.t * 2) * 2;
+  // the idle, powered-down mech (same silhouette, cool blue, no canopy glow)
+  cx.save(); cx.translate(x, y);
+  cx.lineWidth = 4; cx.lineCap = 'round'; cx.lineJoin = 'round';
+  cx.strokeStyle = '#7df9ff'; cx.fillStyle = '#10101e';
+  cx.shadowColor = '#7df9ff'; cx.shadowBlur = 12;
+  line(-2, -22, -12, -2); cx.fillRect(-18, -4, 13, 5);
+  line(6, -22, 12, -2); cx.fillRect(7, -4, 13, 5);
+  cx.beginPath(); cx.moveTo(-13, -22); cx.lineTo(-15, -52); cx.lineTo(14, -55); cx.lineTo(12, -23); cx.closePath(); cx.fill(); cx.stroke();
+  cx.beginPath(); cx.moveTo(-6, -52); cx.lineTo(-3, -64); cx.lineTo(8, -64); cx.lineTo(10, -52); cx.closePath(); cx.fill(); cx.stroke();
+  cx.fillStyle = '#7df9ff'; cx.fillRect(8, -50, 11, 9); cx.fillRect(15, -48, 24, 6); cx.fillRect(15, -30, 24, 6);
+  cx.restore();
+  // bobbing beacon + label so the player's eye is pulled up to it
+  cx.save(); cx.translate(x, y - 80 + bob);
+  cx.fillStyle = '#7df9ff'; cx.shadowColor = '#7df9ff'; cx.shadowBlur = 12;
+  cx.beginPath(); cx.moveTo(-7, -6); cx.lineTo(7, -6); cx.lineTo(0, 4); cx.closePath(); cx.fill();
+  cx.restore();
+  cx.fillStyle = '#7df9ff'; cx.font = '700 10px ui-monospace, monospace'; cx.textAlign = 'center';
+  cx.fillText('JUMP IN', x, y - 88 + bob);
+  cx.shadowBlur = 0;
+}
+function drawAlly(a){
+  const x = a.x - G.camX, y = a.y;
+  if (x < -60 || x > W + 60) return;
+  const wv = Math.sin(a.t * 6) * 4; // beckoning wave
+  cx.save(); cx.translate(x, y);
+  cx.lineWidth = 3; cx.lineCap = 'round';
+  cx.strokeStyle = '#b6ff3b'; cx.fillStyle = '#0c140a';
+  cx.shadowColor = '#b6ff3b'; cx.shadowBlur = 10;
+  line(1, -16, -5, 0); line(1, -16, 6, 0);   // legs
+  line(1, -16, 1, -32);                        // torso
+  line(1, -28, 10, -37 + wv);                  // raised waving arm
+  line(1, -25, -6, -19);                       // other arm
+  cx.beginPath(); cx.arc(1, -38, 5, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.restore(); cx.shadowBlur = 0;
 }
 function drawEnemy(e){
   const x = e.x - G.camX, y = e.y;
@@ -1076,7 +1243,7 @@ function drawBullets(){
       cx.fillStyle = '#fff'; cx.fillRect(x + dir * 4, b.y - 1, 3, 2); // nose
       continue;
     }
-    const col = b.rainbow ? `hsl(${(tt * 600 + b.x) % 360} 100% 60%)` : b.col;
+    const col = b.rainbow ? soloCol() : b.col;
     cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = 10;
     cx.fillRect(x - b.w / 2, b.y - b.h / 2, b.w, b.h);
   }
@@ -1118,9 +1285,18 @@ function drawHUD(){
     cx.fillRect(x, 18, 24, 9);
     cx.shadowBlur = 0;
   }
-  // weapon tag
+  // weapon / mech tag
   let row = 44;
-  if (p.weapon !== 'std'){
+  if (inMech()){
+    cx.fillStyle = '#ffd23f'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
+    cx.fillText('MECH ' + Math.ceil(p.mechT) + 's', 20, row);
+    for (let i = 0; i < MECH_ARMOR; i++){
+      cx.fillStyle = i < p.mech ? '#ffd23f' : 'rgba(255,210,63,.18)';
+      if (i < p.mech){ cx.shadowColor = '#ffd23f'; cx.shadowBlur = 7; }
+      cx.fillRect(98 + i * 9, row - 9, 7, 9); cx.shadowBlur = 0;
+    }
+    row += 18;
+  } else if (p.weapon !== 'std'){
     const wcol = { laser: '#b6ff3b', spread: '#ff9f1c', rapid: '#7df9ff', rocket: '#ff5e3a' }[p.weapon] || '#ff9f1c';
     cx.fillStyle = wcol;
     cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
@@ -1153,14 +1329,14 @@ function drawHUD(){
   cx.fillStyle = 'rgba(255,255,255,.08)'; cx.fillRect(mx, my, mw, 8);
   const mg = cx.createLinearGradient(mx, 0, mx + mw, 0);
   mg.addColorStop(0, '#ff2d78'); mg.addColorStop(1, '#ffd23f');
-  cx.fillStyle = p.soloT > 0 ? `hsl(${(tt * 420) % 360} 100% 60%)` : mg;
-  if (frac > 0.55 || p.soloT > 0){ cx.shadowColor = '#ffd23f'; cx.shadowBlur = 10; }
+  cx.fillStyle = p.soloT > 0 ? soloCol() : mg;
+  if (frac > 0.55 || p.soloT > 0){ cx.shadowColor = p.soloT > 0 ? '#ff5e3a' : '#ffd23f'; cx.shadowBlur = 10; }
   cx.fillRect(mx, my, mw * frac, 8);
   cx.shadowBlur = 0;
   cx.strokeStyle = 'rgba(255,255,255,.3)'; cx.lineWidth = 1; cx.strokeRect(mx, my, mw, 8);
   cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace';
-  cx.fillStyle = p.soloT > 0 ? '#ffd23f' : 'rgba(232,228,240,.6)';
-  cx.fillText(p.soloT > 0 ? '!! GUITAR SOLO !!' : 'SHRED', W / 2, my - 6);
+  cx.fillStyle = p.soloT > 0 ? '#ff5e3a' : 'rgba(232,228,240,.6)';
+  cx.fillText(p.soloT > 0 ? '!! OVERDRIVE !!' : 'SHRED', W / 2, my - 6);
   // mid-boss health bar
   if (G.bossOn){
     const boss = G.ens.find(e => e.type === 'midboss');
@@ -1267,6 +1443,8 @@ function draw(){
     drawSky(camX); drawFloor(camX);
     for (const pl of G.plats) drawPlat(pl, camX);
     for (const k of G.picks) drawPick(k);
+    for (const po of G.pods) drawMechPod(po);
+    for (const a of G.allies) drawAlly(a);
     for (const e of G.ens) drawEnemy(e);
     drawHero();
     drawBullets();
