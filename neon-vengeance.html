@@ -60,6 +60,7 @@ addEventListener('keydown', e => {
   }
   else if (state === 'play'){
     if (e.code === 'KeyP' || e.code === 'Escape') paused = !paused, syncAudioSuspend();
+    if (paused && e.code === 'KeyR') startRun(); // reset the run from the pause screen
     if (!paused && JUMP.includes(e.code)) tryJump();
   }
 });
@@ -75,8 +76,8 @@ document.addEventListener('visibilitychange', () => {
 let AC = null, master, musicGain, sfxGain, leadBus, echoIn, noiseBuf, tempoDelay = null;
 let mStep = 0, nextT = 0;
 
-// ---- soundtracks: each is 8 bars. A run picks one of the first three at random;
-//      the mid-boss swaps in its own darker, slower theme.
+// ---- soundtracks: each is 8 bars. A run picks one of the non-boss themes at
+//      random; the mid-boss swaps in one of the darker boss themes (boss: true).
 const SONGS = [
   { name: 'NIGHT RUN', bpm: 112,
     roots:  [33,33,29,29,36,36,31,31],
@@ -105,7 +106,25 @@ const SONGS = [
              72,0,69,0,65,0,69,72, 77,0,72,0,69,0,72,77,
              80,0,76,0,71,0,68,71, 80,79,76,0,71,0,0,0],
     penta:  [69,72,74,76,80,81,84,88] },
-  { name: 'IRON COLOSSUS', bpm: 100, heavy: true,
+  { name: 'NEON TIDE', bpm: 126,
+    roots:  [36,36,31,31,33,33,29,29],
+    chords: [[60,64,67],[60,64,67],[55,59,62],[55,59,62],[57,60,64],[57,60,64],[53,57,60],[53,57,60]],
+    bpat:   [0,0,7,0,0,12,0,7],
+    melody: [72,0,76,0,79,0,76,74, 72,0,76,0,81,0,79,76,
+             74,0,71,0,74,0,79,74, 71,0,74,0,71,0,67,71,
+             69,0,72,0,76,0,72,69, 81,0,79,0,76,0,72,76,
+             77,0,76,0,72,0,69,72, 74,72,69,0,72,0,0,0],
+    penta:  [72,74,76,79,81,84,86,88] },
+  { name: 'VHS GHOST', bpm: 96,
+    roots:  [38,38,34,34,29,29,33,33],
+    chords: [[50,53,57],[50,53,57],[46,50,53],[46,50,53],[53,57,60],[53,57,60],[45,49,52],[45,49,52]],
+    bpat:   [0,0,0,7,0,0,0,12],
+    melody: [62,0,0,0,65,0,69,0, 74,0,0,0,69,0,65,62,
+             70,0,0,0,65,0,0,62, 65,0,0,0,62,0,0,0,
+             65,0,0,0,69,0,72,0, 72,0,0,0,69,0,65,69,
+             64,0,0,0,61,0,0,0, 69,0,68,0,64,0,0,0],
+    penta:  [62,65,67,69,72,74,77,81] },
+  { name: 'IRON COLOSSUS', bpm: 100, heavy: true, boss: true,
     roots:  [26,26,34,34,26,26,25,25],
     chords: [[50,53,57],[50,53,57],[46,50,53],[46,50,53],[50,53,57],[50,53,57],[45,49,52],[45,49,52]],
     bpat:   [0,0,0,12,0,0,0,7],
@@ -113,9 +132,20 @@ const SONGS = [
              58,0,0,0,62,0,0,58, 58,0,57,0,0,0,0,0,
              62,0,0,0,65,0,69,0, 74,0,0,0,69,0,65,62,
              61,0,0,0,64,0,0,0, 64,63,61,0,0,0,0,0],
-    penta:  [62,65,69,72,74,77,81,84] }
+    penta:  [62,65,69,72,74,77,81,84] },
+  { name: 'VOID ENGINE', bpm: 92, heavy: true, boss: true,
+    roots:  [28,28,29,29,28,28,26,26],
+    chords: [[52,55,59],[52,55,59],[53,57,60],[53,57,60],[52,55,59],[52,55,59],[50,54,57],[50,54,57]],
+    bpat:   [0,0,12,0,0,7,0,12],
+    melody: [64,0,0,0,67,0,0,64, 71,0,0,0,67,0,65,64,
+             65,0,0,0,69,0,0,65, 72,0,0,0,65,0,0,0,
+             64,0,0,0,67,0,71,0, 74,0,0,0,71,0,67,64,
+             66,0,0,0,62,0,0,0, 69,0,66,0,62,0,0,0],
+    penta:  [64,67,69,71,74,76,79,83] }
 ];
-const BOSS_SONG = 3;
+function songIdxsWhere(boss){ const a = []; for (let i = 0; i < SONGS.length; i++) if (!!SONGS[i].boss === boss) a.push(i); return a; }
+function pickRunSong(){ const a = songIdxsWhere(false); return a[Math.random() * a.length | 0]; }
+function pickBossSong(){ const a = songIdxsWhere(true); return a[Math.random() * a.length | 0]; }
 let songIdx = 0, song = SONGS[0], prevSong = 0;
 let SPB = 60 / song.bpm;
 let soloIdx = 3;
@@ -186,10 +216,10 @@ function stepMusic(s, t){
   // arp sparkle on 16ths
   const ch = song.chords[bar];
   arpNote(ch[p % 3] + (p % 2 ? 12 : 0), t);
-  // lead: melody normally, screaming pentatonic runs during solo mode
+  // lead: melody normally, a soaring anthemic power-chord lead during solo mode
   const solo = G && G.p && G.p.soloT > 0;
   if (solo){
-    if (Math.random() < 0.78) soloNote(t);
+    soloStep(bar, p, t);
   } else if (playing && p % 2 === 0){
     const n = song.melody[bar * 8 + p / 2];
     if (n) leadNote(n, t, SPB * 0.42, 0.16);
@@ -240,18 +270,64 @@ function leadNote(m, t, d, v){
     o.connect(g); g.connect(leadBus); o.start(t); o.stop(t + d + 0.02);
   }
 }
-function soloNote(t){
-  soloIdx += (Math.random() * 5 | 0) - 2;
-  soloIdx = Math.max(0, Math.min(song.penta.length - 1, soloIdx));
-  const m = song.penta[soloIdx], d = SPB / 4 * (Math.random() < 0.2 ? 2 : 1);
-  for (const det of [-9, 9]){
-    const o = AC.createOscillator(), g = AC.createGain();
-    o.type = 'sawtooth'; o.detune.value = det;
-    o.frequency.setValueAtTime(hz(m), t);
-    if (Math.random() < 0.3) o.frequency.exponentialRampToValueAtTime(hz(m + 2), t + d); // bend
-    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.3, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.001, t + d);
-    o.connect(g); g.connect(leadBus); o.start(t); o.stop(t + d + 0.02);
+// snap a note to the nearest chord tone in ANY octave, so landings stay in the
+// lead's own register instead of being forced sky-high
+function chordToneNear(c, around){
+  let best = c[0], bd = Infinity;
+  for (const base of c) for (const oct of [-12, 0, 12, 24]){
+    const cand = base + oct, d = Math.abs(cand - around);
+    if (d < bd){ bd = d; best = cand; }
+  }
+  return best;
+}
+// anthemic lead: sustained notes on the beat, landings locked to chord tones,
+// a held note at the bar's end that resolves into the next chord.
+function soloStep(bar, p, t){
+  const beat = p >> 2, six = p & 3;
+  const onBeat = six === 0;
+  const pickup = six === 2 && (beat === 1 || beat === 3); // a little motion between landings
+  if (!onBeat && !pickup) return;
+  const scale = song.penta;
+  // gentle contour: rise through the first half of the bar, ease back through the second
+  if (onBeat) soloIdx += (beat < 2 ? 1 : -1) * (Math.random() < 0.65 ? 1 : 2);
+  else soloIdx += Math.random() < 0.5 ? 1 : -1;
+  soloIdx = Math.max(0, Math.min(scale.length - 1, soloIdx));
+  let m = scale[soloIdx];
+  // land the strong beats on a real chord tone so the line sounds deliberate
+  if (onBeat && beat % 2 === 0) m = chordToneNear(song.chords[bar], m);
+  // the bar-end note is held long and resolves into the next chord (the anthem lift)
+  if (onBeat && beat === 3) m = chordToneNear(song.chords[(bar + 1) % 8], m);
+  const isRoot = (((m - song.chords[bar][0]) % 12) + 12) % 12 === 0;
+  const dur = pickup ? SPB * 0.3 : beat === 3 ? SPB * 1.3 : SPB * 0.7;
+  leadStab(m, t, dur, !pickup, isRoot);
+}
+function leadStab(m, t, dur, fat, root){
+  // a single screaming lead voice (detuned saw pair) with a snappy picked attack.
+  // on root landings a short power-chord fifth stabs in for punch — never a drone.
+  const peak = 0.26;
+  const voices = [[0, peak]];
+  if (root && fat) voices.push([7, peak * 0.5]); // power-chord fifth, accent only
+  // delayed vibrato: the note starts dead-on (pick attack) and only wobbles if held
+  const lfo = AC.createOscillator(), lg = AC.createGain();
+  lfo.type = 'sine'; lfo.frequency.value = 5.6;
+  lg.gain.setValueAtTime(0, t);
+  lg.gain.setValueAtTime(0, t + 0.16);
+  lg.gain.linearRampToValueAtTime(7, t + 0.42);
+  lfo.connect(lg); lfo.start(t); lfo.stop(t + dur + 0.06);
+  for (const [iv, vol] of voices){
+    const vd = iv === 7 ? Math.min(dur, SPB * 0.38) : dur; // the fifth is a stab, not a pad
+    for (const det of [-7, 7]){
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = 'sawtooth'; o.detune.value = det; o.frequency.value = hz(m + iv);
+      lg.connect(o.detune);
+      // picked-guitar envelope: fast attack, decay to a sustain, then release
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(vol * 0.55, t + 0.14);
+      g.gain.setValueAtTime(vol * 0.55, t + vd * 0.6);
+      g.gain.exponentialRampToValueAtTime(0.001, t + vd);
+      o.connect(g); g.connect(leadBus); o.start(t); o.stop(t + vd + 0.06);
+    }
   }
 }
 // ---- sfx
@@ -304,8 +380,8 @@ function startRun(){
     genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200,
     bossOn: false, dieT: 0, line: ''
   };
-  // pick a fresh soundtrack for the run (never the boss theme)
-  setSong(Math.random() * BOSS_SONG | 0);
+  // pick a fresh soundtrack for the run (never a boss theme)
+  setSong(pickRunSong());
   prevSong = songIdx;
   // a welcome-mat platform with a star on it
   G.plats.push({ x: 430, y: 372, w: 170 });
@@ -315,7 +391,7 @@ function startRun(){
 }
 function enterBoss(){
   if (G.bossOn) return;
-  G.bossOn = true; prevSong = songIdx; setSong(BOSS_SONG);
+  G.bossOn = true; prevSong = songIdx; setSong(pickBossSong());
   addText(G.camX + W / 2, 130, '⚠ MID-BOSS INCOMING ⚠', '#c44dff', 2.6);
   shake = 12;
 }
@@ -1178,7 +1254,7 @@ function drawPaused(){
   cx.fillStyle = 'rgba(232,228,240,.85)';
   cx.fillText('Go take the call. The grid will wait.', W / 2, 286);
   cx.fillStyle = '#19e3ff';
-  cx.fillText('P  resume      M  mute', W / 2, 322);
+  cx.fillText('P  resume      R  reset      M  mute', W / 2, 322);
 }
 function draw(){
   cx.save();
