@@ -72,9 +72,57 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ============================================================ audio — procedural synthwave
-const BPM = 112, SPB = 60 / BPM;
-let AC = null, master, musicGain, sfxGain, leadBus, echoIn, noiseBuf;
+let AC = null, master, musicGain, sfxGain, leadBus, echoIn, noiseBuf, tempoDelay = null;
 let mStep = 0, nextT = 0;
+
+// ---- soundtracks: each is 8 bars. A run picks one of the first three at random;
+//      the mid-boss swaps in its own darker, slower theme.
+const SONGS = [
+  { name: 'NIGHT RUN', bpm: 112,
+    roots:  [33,33,29,29,36,36,31,31],
+    chords: [[57,60,64],[57,60,64],[53,57,60],[53,57,60],[60,64,67],[60,64,67],[55,59,62],[55,59,62]],
+    bpat:   [0,0,12,0,0,0,12,7],
+    melody: [69,0,72,0,76,0,74,72, 69,0,72,0,76,0,79,76,
+             77,0,76,0,72,0,69,72, 74,72,69,0,0,0,67,69,
+             72,0,76,0,79,0,76,72, 74,0,72,0,69,0,72,74,
+             79,0,78,0,74,0,71,74, 76,74,71,0,69,0,0,0],
+    penta:  [69,72,74,76,79,81,84,88] },
+  { name: 'MIDNIGHT DRIVE', bpm: 120,
+    roots:  [28,28,36,36,31,31,38,38],
+    chords: [[52,55,59],[52,55,59],[48,52,55],[48,52,55],[55,59,62],[55,59,62],[50,54,57],[50,54,57]],
+    bpat:   [0,0,7,0,0,12,0,7],
+    melody: [64,0,67,0,71,0,69,67, 64,0,67,0,71,0,74,71,
+             72,0,71,0,67,0,64,67, 67,0,64,0,0,0,62,64,
+             67,0,71,0,74,0,71,67, 69,0,67,0,64,0,67,69,
+             74,0,73,0,69,0,66,69, 71,69,66,0,64,0,0,0],
+    penta:  [64,67,69,71,74,76,79,83] },
+  { name: 'AFTERBURNER', bpm: 132,
+    roots:  [33,33,31,31,29,29,28,28],
+    chords: [[57,60,64],[57,60,64],[55,59,62],[55,59,62],[53,57,60],[53,57,60],[52,56,59],[52,56,59]],
+    bpat:   [0,0,12,7,0,0,12,0],
+    melody: [69,0,72,0,76,0,74,72, 69,71,72,0,76,0,79,76,
+             74,0,71,0,67,0,71,74, 79,0,76,0,74,0,71,67,
+             72,0,69,0,65,0,69,72, 77,0,72,0,69,0,72,77,
+             80,0,76,0,71,0,68,71, 80,79,76,0,71,0,0,0],
+    penta:  [69,72,74,76,80,81,84,88] },
+  { name: 'IRON COLOSSUS', bpm: 100, heavy: true,
+    roots:  [26,26,34,34,26,26,25,25],
+    chords: [[50,53,57],[50,53,57],[46,50,53],[46,50,53],[50,53,57],[50,53,57],[45,49,52],[45,49,52]],
+    bpat:   [0,0,0,12,0,0,0,7],
+    melody: [62,0,0,0,65,0,0,62, 62,0,0,0,69,0,68,0,
+             58,0,0,0,62,0,0,58, 58,0,57,0,0,0,0,0,
+             62,0,0,0,65,0,69,0, 74,0,0,0,69,0,65,62,
+             61,0,0,0,64,0,0,0, 64,63,61,0,0,0,0,0],
+    penta:  [62,65,69,72,74,77,81,84] }
+];
+const BOSS_SONG = 3;
+let songIdx = 0, song = SONGS[0], prevSong = 0;
+let SPB = 60 / song.bpm;
+let soloIdx = 3;
+function setSong(i){
+  songIdx = i; song = SONGS[i]; SPB = 60 / song.bpm;
+  if (tempoDelay) tempoDelay.delayTime.value = SPB * 0.75;
+}
 
 function ensureAudio(){
   if (AC){ if (AC.state === 'suspended' && !document.hidden) AC.resume(); return; }
@@ -92,7 +140,7 @@ function ensureAudio(){
     shaper.curve = curve; shaper.oversample = '2x';
     leadBus = AC.createGain(); leadBus.gain.value = 1; leadBus.connect(shaper);
     const post = AC.createGain(); post.gain.value = 0.45; shaper.connect(post); post.connect(musicGain);
-    const dly = AC.createDelay(1); dly.delayTime.value = SPB * 0.75;
+    const dly = AC.createDelay(1); dly.delayTime.value = SPB * 0.75; tempoDelay = dly;
     const fb = AC.createGain(); fb.gain.value = 0.32;
     const wet = AC.createGain(); wet.gain.value = 0.33;
     echoIn = AC.createGain(); echoIn.gain.value = 1;
@@ -117,19 +165,6 @@ function noiseSrc(t, dur){
 }
 function hz(m){ return 440 * Math.pow(2, (m - 69) / 12); }
 
-// song data: 8 bars — Am Am F F C C G G
-const ROOTS  = [33,33,29,29,36,36,31,31];
-const CHORDS = [[57,60,64],[57,60,64],[53,57,60],[53,57,60],[60,64,67],[60,64,67],[55,59,62],[55,59,62]];
-const BPAT   = [0,0,12,0,0,0,12,7];
-const MELODY = [
-  69,0,72,0,76,0,74,72,   69,0,72,0,76,0,79,76,
-  77,0,76,0,72,0,69,72,   74,72,69,0,0,0,67,69,
-  72,0,76,0,79,0,76,72,   74,0,72,0,69,0,72,74,
-  79,0,78,0,74,0,71,74,   76,74,71,0,69,0,0,0
-];
-const PENTA = [69,72,74,76,79,81,84,88];
-let soloIdx = 3;
-
 function scheduler(){
   if (!AC || AC.state !== 'running') { if (AC) nextT = AC.currentTime + 0.1; return; }
   while (nextT < AC.currentTime + 0.13){
@@ -140,30 +175,32 @@ function scheduler(){
 function stepMusic(s, t){
   const bar = (s >> 4) % 8, p = s & 15;
   const playing = state === 'play';
+  const heavy = song.heavy;
   // drums
-  if (p % 4 === 0) kick(t);
+  if (p % 4 === 0) kick(t, heavy);
+  if (heavy && p % 4 === 2) kick(t, true); // boss: pounding double-time low end
   if (playing && (p === 4 || p === 12)) snare(t);
   hat(t, p % 4 === 2 ? 0.14 : 0.05);
   // bass — driving 8ths
-  if (p % 2 === 0) bassNote(ROOTS[bar] + BPAT[p / 2], t, SPB * 0.45);
+  if (p % 2 === 0) bassNote(song.roots[bar] + song.bpat[p / 2], t, SPB * 0.45);
   // arp sparkle on 16ths
-  const ch = CHORDS[bar];
+  const ch = song.chords[bar];
   arpNote(ch[p % 3] + (p % 2 ? 12 : 0), t);
   // lead: melody normally, screaming pentatonic runs during solo mode
   const solo = G && G.p && G.p.soloT > 0;
   if (solo){
     if (Math.random() < 0.78) soloNote(t);
   } else if (playing && p % 2 === 0){
-    const n = MELODY[bar * 8 + p / 2];
+    const n = song.melody[bar * 8 + p / 2];
     if (n) leadNote(n, t, SPB * 0.42, 0.16);
   }
 }
-function kick(t){
+function kick(t, heavy){
   const o = AC.createOscillator(), g = AC.createGain();
   o.type = 'sine';
-  o.frequency.setValueAtTime(155, t); o.frequency.exponentialRampToValueAtTime(44, t + 0.11);
-  g.gain.setValueAtTime(0.85, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.18);
+  o.frequency.setValueAtTime(heavy ? 185 : 155, t); o.frequency.exponentialRampToValueAtTime(heavy ? 38 : 44, t + (heavy ? 0.14 : 0.11));
+  g.gain.setValueAtTime(heavy ? 1 : 0.85, t); g.gain.exponentialRampToValueAtTime(0.001, t + (heavy ? 0.2 : 0.16));
+  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + (heavy ? 0.22 : 0.18));
 }
 function snare(t){
   const n = noiseSrc(t, 0.2), f = AC.createBiquadFilter(), g = AC.createGain();
@@ -205,8 +242,8 @@ function leadNote(m, t, d, v){
 }
 function soloNote(t){
   soloIdx += (Math.random() * 5 | 0) - 2;
-  soloIdx = Math.max(0, Math.min(PENTA.length - 1, soloIdx));
-  const m = PENTA[soloIdx], d = SPB / 4 * (Math.random() < 0.2 ? 2 : 1);
+  soloIdx = Math.max(0, Math.min(song.penta.length - 1, soloIdx));
+  const m = song.penta[soloIdx], d = SPB / 4 * (Math.random() < 0.2 ? 2 : 1);
   for (const det of [-9, 9]){
     const o = AC.createOscillator(), g = AC.createGain();
     o.type = 'sawtooth'; o.detune.value = det;
@@ -239,6 +276,9 @@ function sBoom(big){
   n.connect(f); f.connect(g); g.connect(sfxGain);
   sweep('sine', 110, 28, dur, big ? 0.5 : 0.3);
 }
+function sShield(){ sweep('sine', 320, 1200, 0.18, 0.16); sweep('triangle', 640, 240, 0.22, 0.1); }
+function sShieldHit(){ sweep('triangle', 900, 180, 0.18, 0.2); }
+function sRocket(){ sweep('square', 180, 520, 0.18, 0.12); }
 function sSolo(){
   sweep('sawtooth', 220, 1760, 0.55, 0.2);
   if (AC && AC.state === 'running'){
@@ -258,20 +298,43 @@ function startRun(){
   G = {
     p: { x: 120, y: GROUND, vx: 0, vy: 0, onGround: true, jumps: 0, facing: 1,
          hp: 4, iframes: 0, fireCd: 0, flash: 0, animT: 0, dropT: 0,
-         weapon: 'std', weaponT: 0, soloT: 0 },
+         weapon: 'std', weaponT: 0, soloT: 0, shield: 0, shieldT: 0 },
     camX: 0, maxD: 0, score: 0, meter: 0,
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
-    genX: 420, spawnX: 760, nextStalker: 2000,
-    dieT: 0, line: ''
+    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200,
+    bossOn: false, dieT: 0, line: ''
   };
+  // pick a fresh soundtrack for the run (never the boss theme)
+  setSong(Math.random() * BOSS_SONG | 0);
+  prevSong = songIdx;
   // a welcome-mat platform with a star on it
   G.plats.push({ x: 430, y: 372, w: 170 });
   G.picks.push(mkPick('star', 515, 372 - 22));
   state = 'play';
   syncAudioSuspend();
 }
+function enterBoss(){
+  if (G.bossOn) return;
+  G.bossOn = true; prevSong = songIdx; setSong(BOSS_SONG);
+  addText(G.camX + W / 2, 130, '⚠ MID-BOSS INCOMING ⚠', '#c44dff', 2.6);
+  shake = 12;
+}
+function exitBoss(){
+  if (!G.bossOn) return;
+  G.bossOn = false; setSong(prevSong);
+}
 
 function mkPick(type, x, y){ return { type, x, y, w: 22, h: 22, t: Math.random() * 9 }; }
+function randPickup(){
+  const r = Math.random();
+  if (r < 0.30) return 'star';
+  if (r < 0.46) return 'hp';
+  if (r < 0.58) return 'shield';
+  if (r < 0.70) return 'spread';
+  if (r < 0.82) return 'laser';
+  if (r < 0.92) return 'rapid';
+  return 'rocket';
+}
 
 function mkEnemy(type, x){
   const e = { id: ++eid, type, x, hp: 1, t: Math.random() * 9, cd: 1 + Math.random(), face: -1, vy: 0 };
@@ -280,6 +343,9 @@ function mkEnemy(type, x){
   if (type === 'drone'){ e.baseY = 300 + Math.random() * 90; e.y = e.baseY; e.w = 26; e.h = 18; e.hp = 1; e.spd = 95; }
   if (type === 'stalker'){ e.y = GROUND; e.w = 28; e.h = 58; e.hp = 26; e.spd = 70;
     e.phase = 'cloak'; e.pt = 2.6; e.hitT = 0; }
+  if (type === 'midboss'){ e.y = GROUND; e.w = 42; e.h = 60; e.hp = 16; e.spd = 64;
+    e.cd = 1.4; e.hitT = 0; e.burst = 0; e.bt = 0; }
+  e.maxhp = e.hp;
   return e;
 }
 
@@ -290,28 +356,35 @@ function genWorld(){
       const y = Math.random() < 0.5 ? 372 : 326;
       const w = 120 + Math.random() * 130;
       g.plats.push({ x: g.genX, y, w });
-      if (Math.random() < 0.45){
-        const r = Math.random();
-        const type = r < 0.45 ? 'star' : r < 0.7 ? 'hp' : r < 0.88 ? 'spread' : 'laser';
-        g.picks.push(mkPick(type, g.genX + w / 2, y - 22));
-      }
+      if (Math.random() < 0.45)
+        g.picks.push(mkPick(randPickup(), g.genX + w / 2, y - 22));
     }
     g.genX += 300 + Math.random() * 320;
   }
   const diff = g.maxD / 900;
-  while (g.spawnX < g.camX + W + 240){
-    const r = Math.random();
-    let type = 'grunt';
-    if (diff > 1.1 && r < 0.18) type = 'heavy';
-    else if (r < 0.42) type = 'drone';
-    g.ens.push(mkEnemy(type, g.spawnX));
-    if (diff > 1.8 && Math.random() < 0.3) g.ens.push(mkEnemy('drone', g.spawnX + 60));
-    g.spawnX += Math.max(170, 470 - diff * 45) + Math.random() * 250;
+  // mid-boss takes the stage: hold off on the usual rabble while it's alive
+  if (g.bossOn){
+    g.spawnX = Math.max(g.spawnX, g.camX + W + 240);
+  } else {
+    while (g.spawnX < g.camX + W + 240){
+      const r = Math.random();
+      let type = 'grunt';
+      if (diff > 1.1 && r < 0.18) type = 'heavy';
+      else if (r < 0.42) type = 'drone';
+      g.ens.push(mkEnemy(type, g.spawnX));
+      if (diff > 1.8 && Math.random() < 0.3) g.ens.push(mkEnemy('drone', g.spawnX + 60));
+      g.spawnX += Math.max(170, 470 - diff * 45) + Math.random() * 250;
+    }
+  }
+  if (!g.bossOn && g.maxD > g.nextBoss){
+    g.ens.push(mkEnemy('midboss', g.camX + W + 140));
+    g.nextBoss += 3200 + Math.random() * 1400;
+    enterBoss();
   }
   if (g.maxD > g.nextStalker){
     g.ens.push(mkEnemy('stalker', g.camX + W + 120));
     g.nextStalker += 2600;
-    addText(g.camX + W / 2, 140, 'SOMETHING IS HUNTING YOU', '#b6ff3b', 2.4);
+    addText(g.camX + W / 2, 160, 'SOMETHING IS HUNTING YOU', '#b6ff3b', 2.4);
   }
   g.plats = g.plats.filter(pl => pl.x + pl.w > g.camX - 400);
 }
@@ -355,6 +428,14 @@ function tryJump(){
 function hurt(fromX){
   const p = G.p;
   if (p.iframes > 0 || p.soloT > 0) return;
+  if (p.shield > 0){
+    p.shield--; p.iframes = 0.7; shake = 6; sShieldHit();
+    p.vx = p.x < fromX ? -150 : 150;
+    ring(p.x, p.y - 22, '#19e3ff');
+    burst(p.x, p.y - 22, 12, ['#19e3ff', '#9ef0ff', '#fff'], 200);
+    if (p.shield === 0){ p.shieldT = 0; addText(p.x, p.y - 70, 'SHIELD BROKEN', '#19e3ff', 1.1); }
+    return;
+  }
   p.hp--; p.iframes = 1.4; shake = 9; sHurt();
   p.vx = p.x < fromX ? -260 : 260; p.vy = -200; p.onGround = false;
   burst(p.x, p.y - 22, 14, ['#ff2d55', '#ff9f1c'], 260);
@@ -370,15 +451,24 @@ function hurt(fromX){
 }
 function killEnemy(e, i){
   G.ens.splice(i, 1);
-  sBoom(e.type === 'stalker' || e.type === 'heavy');
-  shake = Math.min(14, shake + (e.type === 'stalker' ? 12 : 4));
-  const cols = e.type === 'stalker' ? ['#b6ff3b', '#fff', '#ffd23f'] : ['#ff2d55', '#ff9f1c', '#ffd23f'];
-  burst(e.x, e.y - e.h / 2, e.type === 'stalker' ? 50 : 22, cols, 300);
+  const beefy = e.type === 'stalker' || e.type === 'heavy' || e.type === 'midboss';
+  sBoom(beefy);
+  shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : 4));
+  const cols = e.type === 'stalker' ? ['#b6ff3b', '#fff', '#ffd23f']
+             : e.type === 'midboss' ? ['#c44dff', '#ff2d78', '#fff']
+             : ['#ff2d55', '#ff9f1c', '#ffd23f'];
+  burst(e.x, e.y - e.h / 2, e.type === 'stalker' || e.type === 'midboss' ? 50 : 22, cols, 300);
   ring(e.x, e.y - e.h / 2, cols[0]);
-  const score = { grunt: 100, drone: 150, heavy: 300, stalker: 2000 }[e.type];
+  const score = { grunt: 100, drone: 150, heavy: 300, midboss: 1200, stalker: 2000 }[e.type];
   award(e.x, e.y - e.h, score);
-  addShred({ grunt: 10, drone: 12, heavy: 18, stalker: 100 }[e.type]);
-  if (e.type === 'stalker'){
+  addShred({ grunt: 10, drone: 12, heavy: 18, midboss: 60, stalker: 100 }[e.type]);
+  if (e.type === 'midboss'){
+    G.picks.push(mkPick('hp', e.x - 26, e.y - 30));
+    G.picks.push(mkPick('shield', e.x, e.y - 30));
+    G.picks.push(mkPick(randPickup(), e.x + 26, e.y - 30));
+    addText(e.x, e.y - e.h - 20, 'MID-BOSS DOWN', '#c44dff', 1.8);
+    exitBoss();
+  } else if (e.type === 'stalker'){
     G.picks.push(mkPick('hp', e.x - 20, e.y - 30));
     G.picks.push(mkPick('star', e.x + 20, e.y - 30));
   } else if (Math.random() < 0.16){
@@ -402,6 +492,15 @@ function fire(){
     for (const a of [-0.16, 0, 0.16])
       G.pbul.push({ x: gx, y: gy, vx: Math.cos(a) * 640 * p.facing, vy: Math.sin(a) * 640, w: 10, h: 4, dmg, col: '#ff9f1c', life: 1, hit: {} });
     sShoot();
+  } else if (p.weapon === 'rapid'){
+    p.fireCd = (solo ? 0.035 : 0.06);
+    const j = (Math.random() - 0.5) * 60;
+    G.pbul.push({ x: gx, y: gy, vx: 760 * p.facing, vy: j, w: 11, h: 3, dmg, col: '#19e3ff', life: 0.9, hit: {} });
+    sShoot();
+  } else if (p.weapon === 'rocket'){
+    p.fireCd = (solo ? 0.22 : 0.5);
+    G.pbul.push({ x: gx, y: gy, vx: 520 * p.facing, vy: 0, w: 16, h: 8, dmg, rocket: 1, col: '#ff9f1c', life: 1.5, hit: {} });
+    sRocket();
   } else {
     p.fireCd = (solo ? 0.055 : 0.15);
     G.pbul.push({ x: gx, y: gy, vx: 660 * p.facing, vy: 0, w: 12, h: 4, dmg, col: solo ? '#ffd23f' : '#19e3ff', life: 1, hit: {} });
@@ -428,6 +527,7 @@ function update(dt){
   p.animT += dt; p.fireCd -= dt; p.iframes -= dt; p.flash -= dt; p.dropT -= dt;
   if (p.soloT > 0) p.soloT -= dt;
   if (p.weaponT > 0){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
+  if (p.shield > 0){ p.shieldT -= dt; if (p.shieldT <= 0){ p.shield = 0; addText(p.x, p.y - 70, 'SHIELD OUT', '#19e3ff', 1); } }
   let tvx = 0;
   if (down(LEFT)){ tvx = -250; p.facing = -1; }
   if (down(RIGHT)){ tvx = 250; p.facing = 1; }
@@ -489,31 +589,44 @@ function update(dt){
         if (e.cd <= 0){ e.cd = 0.62; aimedShot(e.x + e.face * 16, e.y - 46, 260, '#b6ff3b', 14, true); }
         if (e.pt <= 0){ e.phase = 'cloak'; e.pt = 2.4 + Math.random(); }
       }
+    } else if (e.type === 'midboss'){
+      e.hitT -= dt;
+      const adx = Math.abs(dx);
+      if (adx > 340) e.x += Math.sign(dx) * e.spd * dt;            // close the gap
+      else if (adx < 220) e.x -= Math.sign(dx) * e.spd * 0.7 * dt; // keep its distance
+      if (onScreen && e.cd <= 0 && adx < 760){ e.cd = 1.6; e.burst = 2; e.bt = 0; }
+      if (e.burst > 0){
+        e.bt -= dt;
+        if (e.bt <= 0){ e.bt = 0.5; e.burst--; aimedSpread(e.x + e.face * 22, e.y - 40, 300, '#c44dff', 12, 3, 0.22); }
+      }
     }
     // contact damage
     if (rectsHit(p.x, p.y - 22, 24, 44, e.x, e.y - e.h / 2, e.w, e.h)) hurt(e.x);
-    if (e.x < g.camX - 650) g.ens.splice(i, 1);
+    if (e.x < g.camX - 650){ if (e.type === 'midboss') exitBoss(); g.ens.splice(i, 1); }
   }
 
   // player bullets
   for (let i = g.pbul.length - 1; i >= 0; i--){
     const b = g.pbul[i];
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-    let dead = b.life <= 0 || b.x < g.camX - 40 || b.x > g.camX + W + 40;
+    const offscreen = b.x < g.camX - 40 || b.x > g.camX + W + 40;
+    let dead = b.life <= 0 || offscreen;
     for (let j = g.ens.length - 1; j >= 0 && !dead; j--){
       const e = g.ens[j];
       if (b.hit[e.id]) continue;
       if (rectsHit(b.x, b.y, b.w, b.h, e.x, e.y - e.h / 2, e.w, e.h)){
         b.hit[e.id] = 1;
+        if (b.rocket){ dead = true; break; } // detonates on contact (AoE handled below)
         let dmg = b.dmg;
         if (e.type === 'stalker' && e.phase === 'cloak') dmg = Math.max(1, dmg >> 1);
         e.hp -= dmg;
-        if (e.type === 'stalker') e.hitT = 0.25;
+        if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
         burst(b.x, b.y, 4, [b.col, '#fff'], 140);
         if (e.hp <= 0) killEnemy(e, j);
         if (!b.pierce) dead = true;
       }
     }
+    if (b.rocket && dead && !offscreen) explodeRocket(b.x, b.y, b.dmg);
     if (dead) g.pbul.splice(i, 1);
   }
   // enemy bullets
@@ -543,16 +656,44 @@ function update(dt){
       if (k.type === 'star'){ addShred(35); addText(k.x, k.y, 'SHRED +35', '#ffd23f', 1); }
       if (k.type === 'spread'){ p.weapon = 'spread'; p.weaponT = 12; addText(k.x, k.y, 'SPREAD', '#ff9f1c', 1); }
       if (k.type === 'laser'){ p.weapon = 'laser'; p.weaponT = 12; addText(k.x, k.y, 'LASER', '#b6ff3b', 1); }
+      if (k.type === 'rapid'){ p.weapon = 'rapid'; p.weaponT = 12; addText(k.x, k.y, 'RAPID', '#19e3ff', 1); }
+      if (k.type === 'rocket'){ p.weapon = 'rocket'; p.weaponT = 14; addText(k.x, k.y, 'ROCKETS', '#ff9f1c', 1); }
+      if (k.type === 'shield'){ p.shield = 3; p.shieldT = 16; addText(k.x, k.y, 'SHIELD', '#19e3ff', 1); }
       burst(k.x, k.y, 10, ['#fff', '#ffd23f'], 160);
       g.picks.splice(i, 1);
     } else if (k.x < g.camX - 500) g.picks.splice(i, 1);
   }
   updateFx(dt);
 }
+function explodeRocket(x, y, dmg){
+  sBoom(true); shake = Math.min(16, shake + 9);
+  burst(x, y, 28, ['#ff9f1c', '#ffd23f', '#fff'], 340);
+  ring(x, y, '#ffd23f');
+  const R = 95;
+  for (let j = G.ens.length - 1; j >= 0; j--){
+    const e = G.ens[j];
+    const ex = e.x - x, ey = (e.y - e.h / 2) - y;
+    if (ex * ex + ey * ey < R * R){
+      let d = dmg * 3;
+      if (e.type === 'stalker' && e.phase === 'cloak') d = Math.max(1, d >> 1);
+      e.hp -= d;
+      if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
+      if (e.hp <= 0) killEnemy(e, j);
+    }
+  }
+}
 function aimedShot(x, y, spd, col, size, plasma){
   const p = G.p;
   const dx = p.x - x, dy = (p.y - 24) - y, len = Math.hypot(dx, dy) || 1;
   G.ebul.push({ x, y, vx: dx / len * spd, vy: dy / len * spd, w: size, h: size, col, plasma });
+}
+function aimedSpread(x, y, spd, col, size, count, spreadA){
+  const p = G.p;
+  const base = Math.atan2((p.y - 24) - y, p.x - x);
+  for (let i = 0; i < count; i++){
+    const a = base + (i - (count - 1) / 2) * spreadA;
+    G.ebul.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, w: size, h: size, col, plasma: true });
+  }
 }
 function updateFx(dt){
   for (let i = G.parts.length - 1; i >= 0; i--){
@@ -687,6 +828,18 @@ function drawPlat(pl, camX){
 function drawHero(){
   const p = G.p;
   if (state === 'dying' || state === 'dead') return;
+  // energy shield bubble (drawn even while the hero blinks)
+  if (p.shield > 0){
+    const bx = p.x - G.camX, by = p.y - 24, fade = p.shieldT < 2 ? 0.4 + 0.6 * Math.abs(Math.sin(tt * 12)) : 1;
+    cx.save();
+    cx.globalAlpha = 0.12 * fade; cx.fillStyle = '#4dffd2';
+    cx.beginPath(); cx.arc(bx, by, 30, 0, Math.PI * 2); cx.fill();
+    cx.globalAlpha = (0.5 + 0.35 * Math.sin(tt * 6)) * fade;
+    cx.strokeStyle = '#7df9ff'; cx.lineWidth = 2.5;
+    cx.shadowColor = '#7df9ff'; cx.shadowBlur = 14;
+    cx.beginPath(); cx.arc(bx, by, 30, 0, Math.PI * 2); cx.stroke();
+    cx.restore(); cx.shadowBlur = 0;
+  }
   if (p.iframes > 0 && ((tt * 14) | 0) % 2) return; // blink
   const x = p.x - G.camX, y = p.y, f = p.facing;
   const run = p.onGround && Math.abs(p.vx) > 30;
@@ -758,6 +911,30 @@ function drawEnemy(e){
     // arm cannon
     line(4, -40, 16, -44); cx.fillStyle = '#b6ff3b'; cx.fillRect(12, -48, 12, 4);
     cx.globalAlpha = 1;
+  } else if (e.type === 'midboss'){
+    const flash = e.hitT > 0, col = '#c44dff';
+    cx.lineWidth = 4;
+    cx.strokeStyle = flash ? '#fff' : col; cx.fillStyle = '#1a0a24';
+    cx.shadowColor = col; cx.shadowBlur = 16;
+    const ph = e.t * 6, st = Math.sin(ph) * 4;
+    // planted legs
+    line(0, -26, -10 + st * 0.4, 0); line(0, -26, 12 - st * 0.4, 0);
+    // hulking torso
+    cx.beginPath();
+    cx.moveTo(-13, -26); cx.lineTo(-15, -52); cx.lineTo(15, -55); cx.lineTo(13, -27); cx.closePath();
+    cx.fill(); cx.stroke();
+    // shoulder pads
+    cx.fillStyle = flash ? '#fff' : col;
+    cx.fillRect(-19, -55, 13, 9); cx.fillRect(8, -57, 15, 10);
+    // head + visor + crest
+    cx.fillStyle = '#1a0a24';
+    cx.beginPath(); cx.arc(3, -63, 7, 0, Math.PI * 2); cx.fill(); cx.stroke();
+    cx.fillStyle = flash ? '#fff' : '#ff2d78'; cx.fillRect(-2, -65, 10, 3);
+    cx.strokeStyle = flash ? '#fff' : col;
+    line(-3, -69, -9, -80); line(8, -70, 13, -81);
+    // arm cannon
+    cx.fillStyle = flash ? '#fff' : col;
+    line(11, -46, 25, -42); cx.fillRect(21, -49, 17, 9);
   } else {
     const heavy = e.type === 'heavy';
     const col = heavy ? '#ff9f1c' : '#ff2d55';
@@ -793,7 +970,8 @@ function drawEnemy(e){
 function drawPick(k){
   const x = k.x - G.camX, y = k.y + Math.sin(k.t * 3) * 4;
   if (x < -40 || x > W + 40) return;
-  const conf = { hp: ['#ff6b9d', '+'], star: ['#ffd23f', '★'], spread: ['#ff9f1c', 'S'], laser: ['#b6ff3b', 'L'] }[k.type];
+  const conf = { hp: ['#ff6b9d', '+'], star: ['#ffd23f', '★'], spread: ['#ff9f1c', 'S'], laser: ['#b6ff3b', 'L'],
+                 rapid: ['#7df9ff', 'R'], rocket: ['#ff5e3a', '►'], shield: ['#4dffd2', '◈'] }[k.type];
   cx.save(); cx.translate(x, y); cx.rotate(Math.sin(k.t * 2) * 0.2);
   cx.strokeStyle = conf[0]; cx.lineWidth = 2;
   cx.shadowColor = conf[0]; cx.shadowBlur = 10;
@@ -809,6 +987,19 @@ function drawPick(k){
 function drawBullets(){
   for (const b of G.pbul){
     const x = b.x - G.camX;
+    if (b.rocket){
+      const dir = Math.sign(b.vx) || 1;
+      cx.fillStyle = '#ffd23f'; cx.shadowColor = '#ff5e3a'; cx.shadowBlur = 14;
+      cx.beginPath();
+      cx.moveTo(x - dir * 8, b.y);
+      cx.lineTo(x - dir * (18 + Math.random() * 9), b.y - 5);
+      cx.lineTo(x - dir * (18 + Math.random() * 9), b.y + 5);
+      cx.closePath(); cx.fill();
+      cx.fillStyle = '#ff5e3a';
+      cx.fillRect(x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+      cx.fillStyle = '#fff'; cx.fillRect(x + dir * 4, b.y - 1, 3, 2); // nose
+      continue;
+    }
     const col = b.rainbow ? `hsl(${(tt * 600 + b.x) % 360} 100% 60%)` : b.col;
     cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = 10;
     cx.fillRect(x - b.w / 2, b.y - b.h / 2, b.w, b.h);
@@ -852,10 +1043,23 @@ function drawHUD(){
     cx.shadowBlur = 0;
   }
   // weapon tag
+  let row = 44;
   if (p.weapon !== 'std'){
-    cx.fillStyle = p.weapon === 'laser' ? '#b6ff3b' : '#ff9f1c';
+    const wcol = { laser: '#b6ff3b', spread: '#ff9f1c', rapid: '#7df9ff', rocket: '#ff5e3a' }[p.weapon] || '#ff9f1c';
+    cx.fillStyle = wcol;
     cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
-    cx.fillText(p.weapon.toUpperCase() + ' ' + Math.ceil(p.weaponT) + 's', 20, 44);
+    cx.fillText(p.weapon.toUpperCase() + ' ' + Math.ceil(p.weaponT) + 's', 20, row);
+    row += 18;
+  }
+  // shield charges
+  if (p.shield > 0){
+    cx.fillStyle = '#4dffd2'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
+    cx.fillText('SHIELD', 20, row);
+    for (let i = 0; i < 3; i++){
+      cx.fillStyle = i < p.shield ? '#4dffd2' : 'rgba(77,255,210,.18)';
+      if (i < p.shield){ cx.shadowColor = '#4dffd2'; cx.shadowBlur = 7; }
+      cx.fillRect(74 + i * 13, row - 9, 10, 9); cx.shadowBlur = 0;
+    }
   }
   // score
   cx.textAlign = 'right'; cx.font = '700 18px ui-monospace, monospace';
@@ -881,8 +1085,26 @@ function drawHUD(){
   cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace';
   cx.fillStyle = p.soloT > 0 ? '#ffd23f' : 'rgba(232,228,240,.6)';
   cx.fillText(p.soloT > 0 ? '!! GUITAR SOLO !!' : 'SHRED', W / 2, my - 6);
+  // mid-boss health bar
+  if (G.bossOn){
+    const boss = G.ens.find(e => e.type === 'midboss');
+    if (boss){
+      const bw = 360, bx = W / 2 - bw / 2, by = 72, f = Math.max(0, boss.hp / boss.maxhp);
+      cx.fillStyle = 'rgba(0,0,0,.5)'; cx.fillRect(bx - 2, by - 2, bw + 4, 12);
+      cx.fillStyle = '#3a1145'; cx.fillRect(bx, by, bw, 8);
+      cx.fillStyle = '#c44dff'; cx.shadowColor = '#c44dff'; cx.shadowBlur = 10;
+      cx.fillRect(bx, by, bw * f, 8); cx.shadowBlur = 0;
+      cx.strokeStyle = 'rgba(255,255,255,.4)'; cx.lineWidth = 1; cx.strokeRect(bx, by, bw, 8);
+      cx.textAlign = 'center'; cx.font = '700 11px ui-monospace, monospace'; cx.fillStyle = '#c44dff';
+      cx.fillText('◆ MID-BOSS ◆', W / 2, by - 5);
+    }
+  }
+  // now-playing track
+  cx.textAlign = 'left'; cx.font = '700 10px ui-monospace, monospace';
+  cx.fillStyle = 'rgba(232,228,240,.4)';
+  cx.fillText('♪ ' + song.name, 20, H - (muted ? 30 : 16));
   if (muted){
-    cx.textAlign = 'left'; cx.fillStyle = 'rgba(232,228,240,.4)';
+    cx.fillStyle = 'rgba(232,228,240,.4)'; cx.font = '700 11px ui-monospace, monospace';
     cx.fillText('MUTED [M]', 20, H - 16);
   }
 }
@@ -916,9 +1138,10 @@ function drawTitle(){
   const rows = [
     '←→ / A D   move        SPACE / W   jump (x2)',
     'J / X / Z   shoot       P  pause     M  mute',
+    'Grab guns: SPREAD · LASER · RAPID · ROCKETS · SHIELD',
     'Fill the SHRED meter. The solo does the rest.'
   ];
-  rows.forEach((r, i) => cx.fillText(r, W / 2, 340 + i * 24));
+  rows.forEach((r, i) => cx.fillText(r, W / 2, 340 + i * 22));
   if (((tt * 1.6) | 0) % 2){
     cx.font = '900 22px ui-monospace, monospace';
     cx.fillStyle = '#19e3ff'; cx.shadowColor = '#19e3ff'; cx.shadowBlur = 14;
@@ -972,6 +1195,11 @@ function draw(){
     drawHero();
     drawBullets();
     drawFx();
+    // mid-boss bathes the grid in hostile red light
+    if (G.bossOn){
+      cx.fillStyle = `rgba(150,10,45,${0.14 + 0.05 * Math.sin(tt * 4)})`;
+      cx.fillRect(0, 0, W, H);
+    }
     drawHUD();
     if (state === 'dead') drawDead();
     else if (paused) drawPaused();
