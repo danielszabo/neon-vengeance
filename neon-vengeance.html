@@ -293,6 +293,7 @@ function sShieldHit(){ sweep('triangle', 900, 180, 0.18, 0.2); }
 function sRocket(){ sweep('square', 180, 520, 0.18, 0.12); }
 function sMech(){ sweep('sawtooth', 90, 360, 0.35, 0.2); sweep('square', 420, 110, 0.4, 0.12); }
 function sMechHit(){ sweep('square', 420, 90, 0.16, 0.22); }
+function sCar(){ sweep('sawtooth', 70, 180, 0.45, 0.2); sweep('square', 150, 320, 0.3, 0.12); }
 function sSolo(){
   // a deep, menacing surge instead of a shrill rising sweep
   sweep('sawtooth', 70, 240, 0.6, 0.24);
@@ -315,11 +316,11 @@ function startRun(){
     p: { x: 120, y: GROUND, vx: 0, vy: 0, onGround: true, jumps: 0, facing: 1,
          hp: 4, iframes: 0, fireCd: 0, flash: 0, animT: 0, dropT: 0,
          weapon: 'std', weaponT: 0, soloT: 0, shield: 0, shieldT: 0,
-         mech: 0, mechT: 0 },
+         mech: 0, mechT: 0, carT: 0, carAng: Math.PI / 3 },
     camX: 0, maxD: 0, score: 0, meter: 0,
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
-    allies: [], pods: [],
-    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500,
+    allies: [], pods: [], cars: [], flyerT: 0,
+    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500, nextCar: 2500,
     bossOn: false, dieT: 0, line: ''
   };
   // pick a fresh soundtrack for the run (never a boss theme)
@@ -359,6 +360,7 @@ function mkEnemy(type, x){
   if (type === 'grunt'){ e.y = GROUND; e.w = 24; e.h = 42; e.hp = 2; e.spd = 55 + Math.random() * 40; }
   if (type === 'heavy'){ e.y = GROUND; e.w = 34; e.h = 46; e.hp = 6; e.spd = 32; }
   if (type === 'drone'){ e.baseY = 300 + Math.random() * 90; e.y = e.baseY; e.w = 26; e.h = 18; e.hp = 1; e.spd = 95; }
+  if (type === 'flyer'){ e.baseY = 90 + Math.random() * 250; e.y = e.baseY; e.w = 24; e.h = 16; e.hp = 1; e.spd = 50 + Math.random() * 80; e.vyb = Math.random() * 9; }
   if (type === 'stalker'){ e.y = GROUND; e.w = 28; e.h = 58; e.hp = 26; e.spd = 70;
     e.phase = 'cloak'; e.pt = 2.6; e.hitT = 0; }
   if (type === 'midboss'){ e.y = GROUND; e.w = 42; e.h = 60; e.hp = 16; e.spd = 64;
@@ -387,8 +389,8 @@ function genWorld(){
     g.genX += 300 + Math.random() * 320;
   }
   const diff = g.maxD / 900;
-  // mid-boss takes the stage: hold off on the usual rabble while it's alive
-  if (g.bossOn){
+  // mid-boss (or the car bonus round) takes the stage: hold off on the usual rabble
+  if (g.bossOn || inCar()){
     g.spawnX = Math.max(g.spawnX, g.camX + W + 240);
   } else {
     while (g.spawnX < g.camX + W + 240){
@@ -401,22 +403,28 @@ function genWorld(){
       g.spawnX += Math.max(170, 470 - diff * 45) + Math.random() * 250;
     }
   }
-  if (!g.bossOn && g.maxD > g.nextGunship){
+  if (!g.bossOn && !inCar() && g.maxD > g.nextGunship){
     g.ens.push(mkEnemy('gunship', g.camX + W + 180));
     g.nextGunship += 7000 + Math.random() * 3000;
     enterBoss('⚠ WARSHIP INBOUND ⚠', '#ff5e3a');
-  } else if (!g.bossOn && g.maxD > g.nextBoss){
+  } else if (!g.bossOn && !inCar() && g.maxD > g.nextBoss){
     g.ens.push(mkEnemy('midboss', g.camX + W + 140));
     g.nextBoss += 3200 + Math.random() * 1400;
     enterBoss();
   }
-  if (g.maxD > g.nextStalker){
+  if (!inCar() && g.maxD > g.nextStalker){
     g.ens.push(mkEnemy('stalker', g.camX + W + 120));
     g.nextStalker += 2600;
     addText(g.camX + W / 2, 160, 'SOMETHING IS HUNTING YOU', '#b6ff3b', 2.4);
   }
+  // battle car: a parked car on the road ahead — jump in for a 10s gunner bonus round
+  if (!g.bossOn && !inCar() && g.maxD > g.nextCar){
+    g.cars.push({ x: g.camX + W + 160, y: GROUND, t: 0 });
+    g.nextCar += 5000 + Math.random() * 2500;
+    addText(g.camX + W / 2, 150, 'BATTLE CAR AHEAD', '#19e3ff', 2.4);
+  }
   // ally drop: a teammate up on a high ledge with a mech parked beside them
-  if (!g.bossOn && g.maxD > g.nextAlly){
+  if (!g.bossOn && !inCar() && g.maxD > g.nextAlly){
     const bx = g.camX + W + 220;
     g.plats.push({ x: bx - 132, y: 372, w: 92 });  // a step to make the climb fair
     g.plats.push({ x: bx, y: 326, w: 174 });        // the high ledge with the prize
@@ -428,6 +436,7 @@ function genWorld(){
   g.plats = g.plats.filter(pl => pl.x + pl.w > g.camX - 400);
   g.allies = g.allies.filter(a => a.x > g.camX - 500);
   g.pods = g.pods.filter(po => po.x > g.camX - 500);
+  g.cars = g.cars.filter(c => c.x > g.camX - 500);
 }
 
 function addText(x, y, s, col, life){ G.texts.push({ x, y, s, col, life: life || 1.2, max: life || 1.2 }); }
@@ -463,6 +472,7 @@ function addShred(n){
 }
 function tryJump(){
   const p = G.p;
+  if (inCar()) return; // in the car, the jump keys aim the turret instead
   if (down(DOWN) && !p.onGround) return;
   if (down(DOWN) && p.onGround && p.y < GROUND){ p.dropT = 0.22; p.onGround = false; return; }
   if (p.onGround){ p.vy = -640; p.onGround = false; p.jumps = 1; sJump(); }
@@ -470,7 +480,7 @@ function tryJump(){
 }
 function hurt(fromX){
   const p = G.p;
-  if (p.iframes > 0 || p.soloT > 0) return;
+  if (p.iframes > 0 || p.soloT > 0 || inCar()) return;
   if (inMech()){
     p.mech--; p.iframes = 0.6; shake = 7; sMechHit();
     p.vx = p.x < fromX ? -120 : 120;
@@ -503,15 +513,15 @@ function killEnemy(e, i){
   G.ens.splice(i, 1);
   const beefy = e.type === 'stalker' || e.type === 'heavy' || e.type === 'midboss';
   sBoom(beefy);
-  shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : 4));
+  shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : e.type === 'flyer' ? 2 : 4));
   const cols = e.type === 'stalker' ? ['#b6ff3b', '#fff', '#ffd23f']
              : e.type === 'midboss' ? ['#c44dff', '#ff2d78', '#fff']
              : ['#ff2d55', '#ff9f1c', '#ffd23f'];
   burst(e.x, e.y - e.h / 2, e.type === 'stalker' || e.type === 'midboss' ? 50 : 22, cols, 300);
   ring(e.x, e.y - e.h / 2, cols[0]);
-  const score = { grunt: 100, drone: 150, heavy: 300, midboss: 1200, stalker: 2000 }[e.type];
+  const score = { grunt: 100, drone: 150, heavy: 300, flyer: 120, midboss: 1200, stalker: 2000 }[e.type];
   award(e.x, e.y - e.h, score);
-  addShred({ grunt: 10, drone: 12, heavy: 18, midboss: 60, stalker: 100 }[e.type]);
+  addShred({ grunt: 10, drone: 12, heavy: 18, flyer: 0, midboss: 60, stalker: 100 }[e.type]);
   if (e.type === 'midboss'){
     G.picks.push(mkPick('hp', e.x - 26, e.y - 30));
     G.picks.push(mkPick('shield', e.x, e.y - 30));
@@ -521,7 +531,7 @@ function killEnemy(e, i){
   } else if (e.type === 'stalker'){
     G.picks.push(mkPick('hp', e.x - 20, e.y - 30));
     G.picks.push(mkPick('star', e.x + 20, e.y - 30));
-  } else if (Math.random() < 0.16){
+  } else if (e.type !== 'flyer' && Math.random() < 0.16){
     const r = Math.random();
     const type = r < 0.3 ? 'hp' : r < 0.6 ? 'spread' : r < 0.8 ? 'laser' : 'star';
     G.picks.push(mkPick(type, e.x, e.y - 26));
@@ -530,6 +540,14 @@ function killEnemy(e, i){
 function fire(){
   const p = G.p;
   if (p.fireCd > 0) return;
+  if (inCar()){
+    p.fireCd = 0.12;
+    const a = p.carAng, sp = 720;
+    const bx = p.x - 4 + Math.cos(a) * 28, by = p.y - 30 - Math.sin(a) * 28;
+    G.pbul.push({ x: bx, y: by, vx: Math.cos(a) * sp, vy: -Math.sin(a) * sp, w: 10, h: 6, dmg: 2, col: '#ffd23f', life: 1.5, hit: {} });
+    p.flash = 0.06; sShoot();
+    return;
+  }
   const solo = p.soloT > 0;
   const gx = p.x + p.facing * 32, gy = p.y - 31;
   const dmg = solo ? 2 : 1;
@@ -603,6 +621,27 @@ function mechSlam(){
   }
 }
 
+// ---- battle car: a 10s bonus round. it auto-drives forward; Up/Down aim the
+// turret across a 0-180 arc; J/X/Z fires. invulnerable joyride, shoot the flyers.
+const CAR_TIME = 10, CAR_SPEED = 360;
+function inCar(){ return G.p.carT > 0; }
+function enterCar(){
+  const p = G.p;
+  p.carT = CAR_TIME; p.carAng = Math.PI / 3; p.facing = 1;
+  p.y = GROUND; p.vy = 0; p.onGround = true;
+  G.flyerT = 0.3;
+  sCar(); shake = 8;
+  burst(p.x, p.y - 18, 20, ['#19e3ff', '#ffd23f', '#fff'], 240);
+  addText(p.x, p.y - 84, 'JOYRIDE!  ↑ ↓ AIM', '#19e3ff', 2.4);
+}
+function ejectCar(){
+  const p = G.p;
+  p.carT = 0; p.iframes = Math.max(p.iframes, 1);
+  sBoom(false); shake = 6;
+  burst(p.x, p.y - 18, 22, ['#19e3ff', '#ffd23f', '#fff'], 280);
+  addText(p.x, p.y - 70, 'RIDE OVER', '#19e3ff', 1.2);
+}
+
 // ============================================================ update
 function update(dt){
   const g = G, p = g.p;
@@ -620,12 +659,22 @@ function update(dt){
   p.animT += dt; p.fireCd -= dt; p.iframes -= dt; p.flash -= dt; p.dropT -= dt;
   if (p.soloT > 0) p.soloT -= dt;
   if (p.mechT > 0){ p.mechT -= dt; if (p.mechT <= 0) ejectMech(); }
-  // the carried weapon's clock pauses while piloting, so you don't waste it
-  if (p.weaponT > 0 && !inMech()){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
+  if (p.carT > 0){ p.carT -= dt; if (p.carT <= 0) ejectCar(); }
+  // the carried weapon's clock pauses while piloting/driving, so you don't waste it
+  if (p.weaponT > 0 && !inMech() && !inCar()){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
   if (p.shield > 0){ p.shieldT -= dt; if (p.shieldT <= 0){ p.shield = 0; addText(p.x, p.y - 70, 'SHIELD OUT', '#19e3ff', 1); } }
   let tvx = 0;
-  if (down(LEFT)){ tvx = -250; p.facing = -1; }
-  if (down(RIGHT)){ tvx = 250; p.facing = 1; }
+  if (inCar()){
+    tvx = CAR_SPEED; p.facing = 1;                                  // auto-drives forward
+    if (down(JUMP)) p.carAng = Math.min(Math.PI, p.carAng + 2.4 * dt); // Up raises the barrel
+    if (down(DOWN)) p.carAng = Math.max(0, p.carAng - 2.4 * dt);       // Down lowers it
+    // stream of flyers to shoot down
+    g.flyerT -= dt;
+    if (g.flyerT <= 0){ g.flyerT = 0.3 + Math.random() * 0.2; g.ens.push(mkEnemy('flyer', g.camX + W + 30 + Math.random() * 70)); }
+  } else {
+    if (down(LEFT)){ tvx = -250; p.facing = -1; }
+    if (down(RIGHT)){ tvx = 250; p.facing = 1; }
+  }
   p.vx += (tvx - p.vx) * Math.min(1, dt * 10);
   p.vy += 1750 * dt;
   const prevY = p.y, prevOnGround = p.onGround, fallV = p.vy;
@@ -676,6 +725,9 @@ function update(dt){
         e.cd = 1.7;
         g.ebul.push({ x: e.x, y: e.y + 10, vx: 0, vy: 60, w: 9, h: 9, col: '#19e3ff', grav: 1 });
       }
+    } else if (e.type === 'flyer'){
+      e.x -= e.spd * dt;                              // streams toward/past the car
+      e.y = e.baseY + Math.sin(e.t * 3 + e.vyb) * 22; // harmless target, just bobs
     } else if (e.type === 'stalker'){
       e.pt -= dt; e.hitT -= dt;
       if (e.phase === 'cloak'){
@@ -788,8 +840,17 @@ function update(dt){
     const po = g.pods[i];
     po.t += dt;
     const pb = pbox();
-    if (!inMech() && rectsHit(po.x, po.y - 28, 46, 56, pb[0], pb[1], pb[2], pb[3])){
+    if (!inMech() && !inCar() && rectsHit(po.x, po.y - 28, 46, 56, pb[0], pb[1], pb[2], pb[3])){
       enterMech(); g.pods.splice(i, 1);
+    }
+  }
+  // battle cars — parked on the road; step in to start the bonus round
+  for (let i = g.cars.length - 1; i >= 0; i--){
+    const c = g.cars[i];
+    c.t += dt;
+    const pb = pbox();
+    if (!inMech() && !inCar() && rectsHit(c.x, c.y - 16, 54, 30, pb[0], pb[1], pb[2], pb[3])){
+      enterCar(); g.cars.splice(i, 1);
     }
   }
   // allies just wave you over; advance their idle animation
@@ -1003,6 +1064,7 @@ function drawPlat(pl, camX){
 function drawHero(){
   const p = G.p;
   if (state === 'dying' || state === 'dead') return;
+  if (inCar()){ drawCar(); return; }
   if (inMech()){ drawMech(); return; }
   // energy shield bubble (drawn even while the hero blinks)
   if (p.shield > 0){
@@ -1135,6 +1197,56 @@ function drawAlly(a){
   cx.beginPath(); cx.arc(1, -38, 5, 0, Math.PI * 2); cx.fill(); cx.stroke();
   cx.restore(); cx.shadowBlur = 0;
 }
+function carBody(rim){
+  cx.lineWidth = 3; cx.lineCap = 'round'; cx.lineJoin = 'round';
+  cx.strokeStyle = rim; cx.fillStyle = '#0d0d18'; cx.shadowColor = rim; cx.shadowBlur = 12;
+  cx.beginPath();
+  cx.moveTo(-34, -2); cx.lineTo(-30, -15); cx.lineTo(-8, -21); cx.lineTo(16, -21); cx.lineTo(34, -9); cx.lineTo(37, -2); cx.closePath();
+  cx.fill(); cx.stroke();
+  cx.beginPath(); cx.moveTo(-6, -21); cx.lineTo(-2, -30); cx.lineTo(12, -30); cx.lineTo(15, -21); cx.closePath(); cx.fill(); cx.stroke();
+  for (const wx of [-20, 22]){
+    cx.fillStyle = '#10101e'; cx.strokeStyle = rim;
+    cx.beginPath(); cx.arc(wx, 1, 8, 0, Math.PI * 2); cx.fill(); cx.stroke();
+    cx.fillStyle = rim; cx.beginPath(); cx.arc(wx, 1, 2.5, 0, Math.PI * 2); cx.fill();
+  }
+}
+function drawCar(){
+  const p = G.p, x = p.x - G.camX, y = p.y;
+  const blink = p.carT < 2 && ((tt * 10) | 0) % 2;  // flashes when the ride is almost up
+  cx.save(); cx.translate(x, y); cx.globalAlpha = blink ? 0.6 : 1;
+  carBody('#19e3ff');
+  // turret base on the rear deck + barrel aimed along carAng (0 = forward, PI = back)
+  const tx = -6, ty = -30, a = p.carAng, bl = 26;
+  cx.fillStyle = '#0d0d18'; cx.strokeStyle = '#ffd23f'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 10;
+  cx.beginPath(); cx.arc(tx, ty, 7, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.lineWidth = 5; cx.lineCap = 'round';
+  line(tx, ty, tx + Math.cos(a) * bl, ty - Math.sin(a) * bl);
+  if (p.flash > 0){
+    cx.fillStyle = '#fff'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 18;
+    cx.beginPath(); cx.arc(tx + Math.cos(a) * (bl + 4), ty - Math.sin(a) * (bl + 4), 4, 0, Math.PI * 2); cx.fill();
+  }
+  cx.globalAlpha = 1; cx.restore(); cx.shadowBlur = 0;
+}
+function drawCarPod(c){
+  const x = c.x - G.camX, y = c.y;
+  if (x < -90 || x > W + 90) return;
+  const bob = Math.sin(c.t * 2) * 2;
+  cx.save(); cx.translate(x, y);
+  carBody('#19e3ff');
+  const tx = -6, ty = -30, a = Math.PI / 3, bl = 24;   // idle turret, up-forward
+  cx.fillStyle = '#0d0d18'; cx.strokeStyle = '#ffd23f'; cx.shadowColor = '#ffd23f'; cx.shadowBlur = 8;
+  cx.beginPath(); cx.arc(tx, ty, 7, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.lineWidth = 5; cx.lineCap = 'round';
+  line(tx, ty, tx + Math.cos(a) * bl, ty - Math.sin(a) * bl);
+  cx.restore();
+  cx.save(); cx.translate(x, y - 58 + bob);
+  cx.fillStyle = '#19e3ff'; cx.shadowColor = '#19e3ff'; cx.shadowBlur = 12;
+  cx.beginPath(); cx.moveTo(-7, -6); cx.lineTo(7, -6); cx.lineTo(0, 4); cx.closePath(); cx.fill();
+  cx.restore();
+  cx.fillStyle = '#19e3ff'; cx.font = '700 10px ui-monospace, monospace'; cx.textAlign = 'center';
+  cx.fillText('JUMP IN', x, y - 66 + bob);
+  cx.shadowBlur = 0;
+}
 function drawGunship(e){
   const x = e.x - G.camX, y = e.y;
   if (x < -220 || x > W + 220) return;
@@ -1198,6 +1310,16 @@ function drawEnemy(e){
     line(-14, -9, -14 + sp2, -13); line(14, -9, 14 - sp2, -13);
     cx.fillStyle = '#ff2d55';
     cx.beginPath(); cx.arc(0, 0, 2.5 + Math.sin(e.t * 9) * 1, 0, Math.PI * 2); cx.fill();
+  } else if (e.type === 'flyer'){
+    cx.strokeStyle = '#ff6b9d'; cx.fillStyle = '#160a12';
+    cx.shadowColor = '#ff6b9d'; cx.shadowBlur = 9;
+    cx.beginPath();
+    cx.moveTo(-12, 0); cx.lineTo(0, -7); cx.lineTo(13, 0); cx.lineTo(0, 6); cx.closePath();
+    cx.fill(); cx.stroke();
+    const fl = Math.sin(e.t * 22) * 4;
+    line(-4, -3, -11, -9 + fl); line(4, -3, 11, -9 + fl); // flapping wings
+    cx.fillStyle = '#ff6b9d';
+    cx.beginPath(); cx.arc(2, -1, 2.5, 0, Math.PI * 2); cx.fill();
   } else if (e.type === 'stalker'){
     const cloaked = e.phase === 'cloak' && e.hitT <= 0;
     const a = cloaked ? 0.1 + 0.07 * Math.abs(Math.sin(e.t * 5)) : 0.95;
@@ -1345,9 +1467,14 @@ function drawHUD(){
     cx.fillRect(x, 18, 24, 9);
     cx.shadowBlur = 0;
   }
-  // weapon / mech tag
+  // weapon / mech / car tag
   let row = 44;
-  if (inMech()){
+  if (inCar()){
+    cx.fillStyle = '#19e3ff'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
+    cx.shadowColor = '#19e3ff'; cx.shadowBlur = 7;
+    cx.fillText('JOYRIDE ' + Math.ceil(p.carT) + 's   ↑↓ AIM', 20, row);
+    cx.shadowBlur = 0; row += 18;
+  } else if (inMech()){
     cx.fillStyle = '#ffd23f'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
     cx.fillText('MECH ' + Math.ceil(p.mechT) + 's', 20, row);
     for (let i = 0; i < MECH_ARMOR; i++){
@@ -1516,6 +1643,7 @@ function draw(){
     for (const pl of G.plats) drawPlat(pl, camX);
     for (const k of G.picks) drawPick(k);
     for (const po of G.pods) drawMechPod(po);
+    for (const c of G.cars) drawCarPod(c);
     for (const a of G.allies) drawAlly(a);
     for (const e of G.ens) drawEnemy(e);
     drawHero();
