@@ -323,11 +323,11 @@ function startRun(){
     p: { x: 120, y: GROUND, vx: 0, vy: 0, onGround: true, jumps: 0, facing: 1,
          hp: 4, iframes: 0, fireCd: 0, flash: 0, animT: 0, dropT: 0,
          weapon: 'std', weaponT: 0, soloT: 0, shield: 0, shieldT: 0,
-         mech: 0, mechT: 0, carT: 0, carAng: Math.PI / 3 },
+         mech: 0, mechT: 0, carT: 0, carAng: Math.PI / 3, heliT: 0 },
     camX: 0, maxD: 0, score: 0, meter: 0,
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
-    allies: [], pods: [], cars: [], flyerT: 0,
-    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500, nextCar: 2500,
+    allies: [], pods: [], cars: [], helis: [], flyerT: 0,
+    genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500, nextCar: 2500, nextHeli: 3800,
     bossOn: false, dieT: 0, line: '',
     zone: 0, boltT: 2.5, flashT: 0, boltX: 0,
     kills: 0, bosses: 0, runT: 0
@@ -370,6 +370,7 @@ function mkEnemy(type, x){
   if (type === 'heavy'){ e.y = GROUND; e.w = 34; e.h = 46; e.hp = 6; e.spd = 32; }
   if (type === 'drone'){ e.baseY = 300 + Math.random() * 90; e.y = e.baseY; e.w = 26; e.h = 18; e.hp = 1; e.spd = 95; }
   if (type === 'flyer'){ e.baseY = 90 + Math.random() * 250; e.y = e.baseY; e.w = 24; e.h = 16; e.hp = 1; e.spd = 50 + Math.random() * 80; e.vyb = Math.random() * 9; }
+  if (type === 'gtarget'){ e.y = GROUND; e.w = 30; e.h = 22; e.hp = 1; e.spd = 0; } // ground target for the heli bombing run
   if (type === 'stalker'){ e.y = GROUND; e.w = 28; e.h = 58; e.hp = 26; e.spd = 70;
     e.phase = 'cloak'; e.pt = 2.6; e.hitT = 0; }
   if (type === 'midboss'){ e.y = GROUND; e.w = 42; e.h = 60; e.hp = 16; e.spd = 64;
@@ -399,7 +400,7 @@ function genWorld(){
   }
   const diff = g.maxD / 900;
   // mid-boss (or the car bonus round) takes the stage: hold off on the usual rabble
-  if (g.bossOn || inCar()){
+  if (g.bossOn || inCar() || inHeli()){
     g.spawnX = Math.max(g.spawnX, g.camX + W + 240);
   } else {
     while (g.spawnX < g.camX + W + 240){
@@ -412,28 +413,34 @@ function genWorld(){
       g.spawnX += Math.max(170, 470 - diff * 45) + Math.random() * 250;
     }
   }
-  if (!g.bossOn && !inCar() && g.maxD > g.nextGunship){
+  if (!g.bossOn && !inCar() && !inHeli() && g.maxD > g.nextGunship){
     g.ens.push(mkEnemy('gunship', g.camX + W + 180));
     g.nextGunship += 7000 + Math.random() * 3000;
     enterBoss('⚠ WARSHIP INBOUND ⚠', '#ff5e3a');
-  } else if (!g.bossOn && !inCar() && g.maxD > g.nextBoss){
+  } else if (!g.bossOn && !inCar() && !inHeli() && g.maxD > g.nextBoss){
     g.ens.push(mkEnemy('midboss', g.camX + W + 140));
     g.nextBoss += 3200 + Math.random() * 1400;
     enterBoss();
   }
-  if (!inCar() && g.maxD > g.nextStalker){
+  if (!inCar() && !inHeli() && g.maxD > g.nextStalker){
     g.ens.push(mkEnemy('stalker', g.camX + W + 120));
     g.nextStalker += 2600;
     addText(g.camX + W / 2, 160, 'SOMETHING IS HUNTING YOU', '#b6ff3b', 2.4);
   }
   // battle car: a parked car on the road ahead — jump in for a 10s gunner bonus round
-  if (!g.bossOn && !inCar() && g.maxD > g.nextCar){
+  if (!g.bossOn && !inCar() && !inHeli() && g.maxD > g.nextCar){
     g.cars.push({ x: g.camX + W + 160, y: GROUND, t: 0 });
     g.nextCar += 5000 + Math.random() * 2500;
     addText(g.camX + W / 2, 150, 'BATTLE CAR AHEAD', '#19e3ff', 2.4);
   }
+  // chopper: parked on the road ahead — jump in for a 10s bombing run
+  if (!g.bossOn && !inCar() && !inHeli() && g.maxD > g.nextHeli){
+    g.helis.push({ x: g.camX + W + 160, y: GROUND, t: 0 });
+    g.nextHeli += 5000 + Math.random() * 2500;
+    addText(g.camX + W / 2, 150, 'CHOPPER AHEAD', '#7df9ff', 2.4);
+  }
   // ally drop: a teammate up on a high ledge with a mech parked beside them
-  if (!g.bossOn && !inCar() && g.maxD > g.nextAlly){
+  if (!g.bossOn && !inCar() && !inHeli() && g.maxD > g.nextAlly){
     const bx = g.camX + W + 220;
     g.plats.push({ x: bx - 132, y: 372, w: 92 });  // a step to make the climb fair
     g.plats.push({ x: bx, y: 326, w: 174 });        // the high ledge with the prize
@@ -446,6 +453,7 @@ function genWorld(){
   g.allies = g.allies.filter(a => a.x > g.camX - 500);
   g.pods = g.pods.filter(po => po.x > g.camX - 500);
   g.cars = g.cars.filter(c => c.x > g.camX - 500);
+  g.helis = g.helis.filter(h => h.x > g.camX - 500);
 }
 
 function addText(x, y, s, col, life){ G.texts.push({ x, y, s, col, life: life || 1.2, max: life || 1.2 }); }
@@ -481,7 +489,7 @@ function addShred(n){
 }
 function tryJump(){
   const p = G.p;
-  if (inCar()) return; // in the car, the jump keys aim the turret instead
+  if (inCar() || inHeli()) return; // in a vehicle the jump keys aim/steer instead
   if (down(DOWN) && !p.onGround) return;
   if (down(DOWN) && p.onGround && p.y < GROUND){ p.dropT = 0.22; p.onGround = false; return; }
   if (p.onGround){ p.vy = -640; p.onGround = false; p.jumps = 1; sJump(); }
@@ -489,7 +497,7 @@ function tryJump(){
 }
 function hurt(fromX){
   const p = G.p;
-  if (p.iframes > 0 || p.soloT > 0 || inCar()) return;
+  if (p.iframes > 0 || p.soloT > 0 || inCar() || inHeli()) return;
   if (inMech()){
     p.mech--; p.iframes = 0.6; shake = 7; sMechHit();
     p.vx = p.x < fromX ? -120 : 120;
@@ -524,15 +532,15 @@ function killEnemy(e, i){
   if (e.type === 'stalker' || e.type === 'midboss') G.bosses++;
   const beefy = e.type === 'stalker' || e.type === 'heavy' || e.type === 'midboss';
   sBoom(beefy);
-  shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : e.type === 'flyer' ? 2 : 4));
+  shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : (e.type === 'flyer' || e.type === 'gtarget') ? 2 : 4));
   const cols = e.type === 'stalker' ? ['#b6ff3b', '#fff', '#ffd23f']
              : e.type === 'midboss' ? ['#c44dff', '#ff2d78', '#fff']
              : ['#ff2d55', '#ff9f1c', '#ffd23f'];
   burst(e.x, e.y - e.h / 2, e.type === 'stalker' || e.type === 'midboss' ? 50 : 22, cols, 300);
   ring(e.x, e.y - e.h / 2, cols[0]);
-  const score = { grunt: 100, drone: 150, heavy: 300, flyer: 120, midboss: 1200, stalker: 2000 }[e.type];
+  const score = { grunt: 100, drone: 150, heavy: 300, flyer: 120, gtarget: 130, midboss: 1200, stalker: 2000 }[e.type];
   award(e.x, e.y - e.h, score);
-  addShred({ grunt: 10, drone: 12, heavy: 18, flyer: 0, midboss: 60, stalker: 100 }[e.type]);
+  addShred({ grunt: 10, drone: 12, heavy: 18, flyer: 0, gtarget: 0, midboss: 60, stalker: 100 }[e.type]);
   if (e.type === 'midboss'){
     G.picks.push(mkPick('hp', e.x - 26, e.y - 30));
     G.picks.push(mkPick('shield', e.x, e.y - 30));
@@ -542,7 +550,7 @@ function killEnemy(e, i){
   } else if (e.type === 'stalker'){
     G.picks.push(mkPick('hp', e.x - 20, e.y - 30));
     G.picks.push(mkPick('star', e.x + 20, e.y - 30));
-  } else if (e.type !== 'flyer' && Math.random() < 0.16){
+  } else if (e.type !== 'flyer' && e.type !== 'gtarget' && Math.random() < 0.16){
     const r = Math.random();
     const type = r < 0.3 ? 'hp' : r < 0.6 ? 'spread' : r < 0.8 ? 'laser' : 'star';
     G.picks.push(mkPick(type, e.x, e.y - 26));
@@ -557,6 +565,13 @@ function fire(){
     const bx = p.x - 4 + Math.cos(a) * 28, by = p.y - 30 - Math.sin(a) * 28;
     G.pbul.push({ x: bx, y: by, vx: Math.cos(a) * sp, vy: -Math.sin(a) * sp, w: 10, h: 6, dmg: 2, col: '#ffd23f', life: 1.5, hit: {} });
     p.flash = 0.06; sShoot();
+    return;
+  }
+  if (inHeli()){
+    p.fireCd = 0.2;
+    // release a bomb: inherits some forward speed, falls, explodes on the ground
+    G.pbul.push({ x: p.x, y: p.y + 8, vx: p.vx * 0.5, vy: 40, w: 8, h: 11, dmg: 3, bomb: 1, col: '#ff9f1c', life: 5, hit: {} });
+    p.flash = 0.05; sRocket();
     return;
   }
   const solo = p.soloT > 0;
@@ -653,6 +668,42 @@ function ejectCar(){
   addText(p.x, p.y - 70, 'RIDE OVER', '#19e3ff', 1.2);
 }
 
+// ---- chopper: a 10s bonus round. it auto-flies forward; Up/Down change altitude;
+// J/X/Z drops bombs that explode on the ground. invulnerable, bomb the targets.
+const HELI_TIME = 10, HELI_SPEED = 320;
+function inHeli(){ return G.p.heliT > 0; }
+function enterHeli(){
+  const p = G.p;
+  p.heliT = HELI_TIME; p.facing = 1;
+  p.y = 240; p.vy = 0; p.onGround = false;
+  G.flyerT = 0.4;
+  sCar(); shake = 8;
+  burst(p.x, p.y, 20, ['#7df9ff', '#ffd23f', '#fff'], 240);
+  addText(p.x, p.y - 30, 'BOMBING RUN!  ↑ ↓ ALTITUDE', '#7df9ff', 2.4);
+}
+function ejectHeli(){
+  const p = G.p;
+  p.heliT = 0; p.iframes = Math.max(p.iframes, 1); // gravity resumes, you drop back to the road
+  sBoom(false); shake = 6;
+  burst(p.x, p.y, 22, ['#7df9ff', '#ffd23f', '#fff'], 280);
+  addText(p.x, p.y - 20, 'RUN COMPLETE', '#7df9ff', 1.2);
+}
+function bombBlast(x, dmg){
+  sBoom(false); shake = Math.min(14, shake + 4);
+  burst(x, GROUND, 16, ['#ff9f1c', '#ffd23f', '#fff'], 240); ring(x, GROUND, '#ffd23f');
+  const R = 74;
+  for (let j = G.ens.length - 1; j >= 0; j--){
+    const e = G.ens[j];
+    if (e.type === 'gunship') continue;
+    const ex = e.x - x, ey = (e.y - e.h / 2) - GROUND;
+    if (ex * ex + ey * ey < R * R){
+      e.hp -= dmg;
+      if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
+      if (e.hp <= 0) killEnemy(e, j);
+    }
+  }
+}
+
 // ============================================================ update
 function update(dt){
   const g = G, p = g.p;
@@ -672,8 +723,9 @@ function update(dt){
   if (p.soloT > 0) p.soloT -= dt;
   if (p.mechT > 0){ p.mechT -= dt; if (p.mechT <= 0) ejectMech(); }
   if (p.carT > 0){ p.carT -= dt; if (p.carT <= 0) ejectCar(); }
-  // the carried weapon's clock pauses while piloting/driving, so you don't waste it
-  if (p.weaponT > 0 && !inMech() && !inCar()){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
+  if (p.heliT > 0){ p.heliT -= dt; if (p.heliT <= 0) ejectHeli(); }
+  // the carried weapon's clock pauses while in a vehicle, so you don't waste it
+  if (p.weaponT > 0 && !inMech() && !inCar() && !inHeli()){ p.weaponT -= dt; if (p.weaponT <= 0) p.weapon = 'std'; }
   if (p.shield > 0){ p.shieldT -= dt; if (p.shieldT <= 0){ p.shield = 0; addText(p.x, p.y - 70, 'SHIELD OUT', '#19e3ff', 1); } }
   let tvx = 0;
   if (inCar()){
@@ -683,26 +735,38 @@ function update(dt){
     // stream of flyers to shoot down
     g.flyerT -= dt;
     if (g.flyerT <= 0){ g.flyerT = 0.3 + Math.random() * 0.2; g.ens.push(mkEnemy('flyer', g.camX + W + 30 + Math.random() * 70)); }
+  } else if (inHeli()){
+    tvx = HELI_SPEED; p.facing = 1;                                 // auto-flies forward
+    // stream of ground targets to bomb
+    g.flyerT -= dt;
+    if (g.flyerT <= 0){ g.flyerT = 0.45 + Math.random() * 0.3; g.ens.push(mkEnemy('gtarget', g.camX + W + 30 + Math.random() * 80)); }
   } else {
     if (down(LEFT)){ tvx = -250; p.facing = -1; }
     if (down(RIGHT)){ tvx = 250; p.facing = 1; }
   }
   p.vx += (tvx - p.vx) * Math.min(1, dt * 10);
-  p.vy += 1750 * dt;
   const prevY = p.y, prevOnGround = p.onGround, fallV = p.vy;
-  p.x += p.vx * dt; p.y += p.vy * dt;
+  p.x += p.vx * dt;
   p.x = Math.max(g.maxD - 520 + 120, p.x);
-  p.onGround = false;
-  if (p.y >= GROUND){ p.y = GROUND; p.vy = 0; p.onGround = true; p.jumps = 0; }
-  else if (p.vy > 0 && p.dropT <= 0){
-    for (const pl of g.plats){
-      if (p.x > pl.x - 4 && p.x < pl.x + pl.w + 4 && prevY <= pl.y && p.y >= pl.y){
-        p.y = pl.y; p.vy = 0; p.onGround = true; p.jumps = 0; break;
+  if (inHeli()){
+    if (down(JUMP)) p.y -= 165 * dt;   // Up = climb
+    if (down(DOWN)) p.y += 165 * dt;   // Down = descend
+    p.y = Math.max(130, Math.min(384, p.y));
+    p.vy = 0; p.onGround = false; p.jumps = 0;
+  } else {
+    p.vy += 1750 * dt; p.y += p.vy * dt;
+    p.onGround = false;
+    if (p.y >= GROUND){ p.y = GROUND; p.vy = 0; p.onGround = true; p.jumps = 0; }
+    else if (p.vy > 0 && p.dropT <= 0){
+      for (const pl of g.plats){
+        if (p.x > pl.x - 4 && p.x < pl.x + pl.w + 4 && prevY <= pl.y && p.y >= pl.y){
+          p.y = pl.y; p.vy = 0; p.onGround = true; p.jumps = 0; break;
+        }
       }
     }
+    // mech stomp: a hard landing shakes the ground and crushes anything under it
+    if (inMech() && !prevOnGround && p.onGround && fallV > 520) mechSlam();
   }
-  // mech stomp: a hard landing shakes the ground and crushes anything under it
-  if (inMech() && !prevOnGround && p.onGround && fallV > 520) mechSlam();
   if (down(FIRE)) fire();
   // camera + distance
   g.camX += (p.x - 300 - g.camX) * Math.min(1, dt * 7);
@@ -799,26 +863,31 @@ function update(dt){
   // player bullets
   for (let i = g.pbul.length - 1; i >= 0; i--){
     const b = g.pbul[i];
+    if (b.bomb) b.vy += 1400 * dt;        // dropped bombs arc down under gravity
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
     const offscreen = b.x < g.camX - 40 || b.x > g.camX + W + 40;
     let dead = b.life <= 0 || offscreen;
-    for (let j = g.ens.length - 1; j >= 0 && !dead; j--){
-      const e = g.ens[j];
-      if (b.hit[e.id]) continue;
-      if (e.type === 'gunship'){ if (hitGunship(e, j, b)) dead = true; continue; }
-      if (rectsHit(b.x, b.y, b.w, b.h, e.x, e.y - e.h / 2, e.w, e.h)){
-        b.hit[e.id] = 1;
-        if (b.rocket){ dead = true; break; } // detonates on contact (AoE handled below)
-        let dmg = b.dmg;
-        if (e.type === 'stalker' && e.phase === 'cloak') dmg = Math.max(1, dmg >> 1);
-        e.hp -= dmg;
-        if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
-        burst(b.x, b.y, 4, [b.col, '#fff'], 140);
-        if (e.hp <= 0) killEnemy(e, j);
-        if (!b.pierce) dead = true;
+    if (b.bomb){
+      if (b.y >= GROUND){ bombBlast(b.x, b.dmg); dead = true; } // detonates on the ground
+    } else {
+      for (let j = g.ens.length - 1; j >= 0 && !dead; j--){
+        const e = g.ens[j];
+        if (b.hit[e.id]) continue;
+        if (e.type === 'gunship'){ if (hitGunship(e, j, b)) dead = true; continue; }
+        if (rectsHit(b.x, b.y, b.w, b.h, e.x, e.y - e.h / 2, e.w, e.h)){
+          b.hit[e.id] = 1;
+          if (b.rocket){ dead = true; break; } // detonates on contact (AoE handled below)
+          let dmg = b.dmg;
+          if (e.type === 'stalker' && e.phase === 'cloak') dmg = Math.max(1, dmg >> 1);
+          e.hp -= dmg;
+          if (e.type === 'stalker' || e.type === 'midboss') e.hitT = 0.25;
+          burst(b.x, b.y, 4, [b.col, '#fff'], 140);
+          if (e.hp <= 0) killEnemy(e, j);
+          if (!b.pierce) dead = true;
+        }
       }
+      if (b.rocket && dead && !offscreen) explodeRocket(b.x, b.y, b.dmg);
     }
-    if (b.rocket && dead && !offscreen) explodeRocket(b.x, b.y, b.dmg);
     if (dead) g.pbul.splice(i, 1);
   }
   // enemy bullets
@@ -860,7 +929,7 @@ function update(dt){
     const po = g.pods[i];
     po.t += dt;
     const pb = pbox();
-    if (!inMech() && !inCar() && rectsHit(po.x, po.y - 28, 46, 56, pb[0], pb[1], pb[2], pb[3])){
+    if (!inMech() && !inCar() && !inHeli() && rectsHit(po.x, po.y - 28, 46, 56, pb[0], pb[1], pb[2], pb[3])){
       enterMech(); g.pods.splice(i, 1);
     }
   }
@@ -869,8 +938,17 @@ function update(dt){
     const c = g.cars[i];
     c.t += dt;
     const pb = pbox();
-    if (!inMech() && !inCar() && rectsHit(c.x, c.y - 16, 54, 30, pb[0], pb[1], pb[2], pb[3])){
+    if (!inMech() && !inCar() && !inHeli() && rectsHit(c.x, c.y - 16, 54, 30, pb[0], pb[1], pb[2], pb[3])){
       enterCar(); g.cars.splice(i, 1);
+    }
+  }
+  // choppers — parked on the road; step in to start the bombing run
+  for (let i = g.helis.length - 1; i >= 0; i--){
+    const h = g.helis[i];
+    h.t += dt;
+    const pb = pbox();
+    if (!inMech() && !inCar() && !inHeli() && rectsHit(h.x, h.y - 18, 58, 34, pb[0], pb[1], pb[2], pb[3])){
+      enterHeli(); g.helis.splice(i, 1);
     }
   }
   // allies just wave you over; advance their idle animation
@@ -1141,6 +1219,7 @@ function drawHero(){
   const p = G.p;
   if (state === 'dying' || state === 'dead') return;
   if (inCar()){ drawCar(); return; }
+  if (inHeli()){ drawHeli(); return; }
   if (inMech()){ drawMech(); return; }
   // energy shield bubble (drawn even while the hero blinks)
   if (p.shield > 0){
@@ -1323,6 +1402,47 @@ function drawCarPod(c){
   cx.fillText('JUMP IN', x, y - 66 + bob);
   cx.shadowBlur = 0;
 }
+function heliBody(rim){
+  cx.lineWidth = 3; cx.lineCap = 'round'; cx.lineJoin = 'round';
+  cx.strokeStyle = rim; cx.fillStyle = '#0d0d18'; cx.shadowColor = rim; cx.shadowBlur = 12;
+  // fuselage (nose to the right)
+  cx.beginPath();
+  cx.moveTo(28, -2); cx.lineTo(14, -12); cx.lineTo(-16, -12); cx.lineTo(-22, -4); cx.lineTo(-16, 6); cx.lineTo(18, 6); cx.closePath();
+  cx.fill(); cx.stroke();
+  // tail boom + fin
+  cx.fillRect(-44, -3, 24, 5);
+  cx.beginPath(); cx.moveTo(-44, -3); cx.lineTo(-50, -13); cx.lineTo(-44, -1); cx.closePath(); cx.fill(); cx.stroke();
+  // cockpit glass
+  cx.save(); cx.globalAlpha *= 0.5; cx.fillStyle = rim; cx.beginPath(); cx.moveTo(28, -2); cx.lineTo(16, -9); cx.lineTo(16, 2); cx.closePath(); cx.fill(); cx.restore();
+  // skids + mast
+  cx.strokeStyle = rim; line(-12, 6, -14, 14); line(12, 6, 14, 14); line(-18, 14, 18, 14); line(0, -12, 0, -18);
+  // main rotor (spinning blur)
+  const sp = Math.sin(tt * 40) * 7;
+  cx.lineWidth = 2;
+  line(-30, -18, 30, -18);
+  cx.save(); cx.globalAlpha *= 0.45; line(-30 + sp, -19, 30 + sp, -19); cx.restore();
+}
+function drawHeli(){
+  const p = G.p, x = p.x - G.camX, y = p.y;
+  const blink = p.heliT < 2 && ((tt * 10) | 0) % 2; // flashes when the run is almost up
+  cx.save(); cx.translate(x, y); cx.globalAlpha = blink ? 0.6 : 1;
+  heliBody('#7df9ff');
+  if (p.flash > 0){ cx.fillStyle = '#ffd23f'; cx.shadowColor = '#ff9f1c'; cx.shadowBlur = 14; cx.beginPath(); cx.arc(0, 9, 4, 0, Math.PI * 2); cx.fill(); }
+  cx.globalAlpha = 1; cx.restore(); cx.shadowBlur = 0;
+}
+function drawHeliPod(h){
+  const x = h.x - G.camX, y = h.y;
+  if (x < -90 || x > W + 90) return;
+  const bob = Math.sin(h.t * 2) * 2;
+  cx.save(); cx.translate(x, y - 14); heliBody('#7df9ff'); cx.restore(); // skids rest on the road
+  cx.save(); cx.translate(x, y - 56 + bob);
+  cx.fillStyle = '#7df9ff'; cx.shadowColor = '#7df9ff'; cx.shadowBlur = 12;
+  cx.beginPath(); cx.moveTo(-7, -6); cx.lineTo(7, -6); cx.lineTo(0, 4); cx.closePath(); cx.fill();
+  cx.restore();
+  cx.fillStyle = '#7df9ff'; cx.font = '700 10px ui-monospace, monospace'; cx.textAlign = 'center';
+  cx.fillText('JUMP IN', x, y - 64 + bob);
+  cx.shadowBlur = 0;
+}
 function drawGunship(e){
   const x = e.x - G.camX, y = e.y;
   if (x < -220 || x > W + 220) return;
@@ -1396,6 +1516,15 @@ function drawEnemy(e){
     line(-4, -3, -11, -9 + fl); line(4, -3, 11, -9 + fl); // flapping wings
     cx.fillStyle = '#ff6b9d';
     cx.beginPath(); cx.arc(2, -1, 2.5, 0, Math.PI * 2); cx.fill();
+  } else if (e.type === 'gtarget'){
+    // a little ground tank you bomb (e.y is the ground, drawn upward)
+    cx.strokeStyle = '#ff9f1c'; cx.fillStyle = '#140a08';
+    cx.shadowColor = '#ff9f1c'; cx.shadowBlur = 8;
+    cx.beginPath(); cx.moveTo(-15, 0); cx.lineTo(-12, -10); cx.lineTo(12, -10); cx.lineTo(15, 0); cx.closePath();
+    cx.fill(); cx.stroke();
+    cx.fillStyle = '#140a08'; cx.fillRect(-6, -17, 12, 8); cx.strokeRect(-6, -17, 12, 8); // turret
+    cx.strokeStyle = '#ff9f1c'; line(2, -13, 14, -16);                                    // barrel
+    cx.fillStyle = '#ff9f1c'; for (let tx = -12; tx <= 8; tx += 6) cx.fillRect(tx, -3, 4, 3); // treads
   } else if (e.type === 'stalker'){
     const cloaked = e.phase === 'cloak' && e.hitT <= 0;
     const a = cloaked ? 0.1 + 0.07 * Math.abs(Math.sin(e.t * 5)) : 0.95;
@@ -1549,6 +1678,11 @@ function drawHUD(){
     cx.fillStyle = '#19e3ff'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
     cx.shadowColor = '#19e3ff'; cx.shadowBlur = 7;
     cx.fillText('JOYRIDE ' + Math.ceil(p.carT) + 's   ↑↓ AIM', 20, row);
+    cx.shadowBlur = 0; row += 18;
+  } else if (inHeli()){
+    cx.fillStyle = '#7df9ff'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
+    cx.shadowColor = '#7df9ff'; cx.shadowBlur = 7;
+    cx.fillText('BOMBING RUN ' + Math.ceil(p.heliT) + 's   ↑↓ ALT', 20, row);
     cx.shadowBlur = 0; row += 18;
   } else if (inMech()){
     cx.fillStyle = '#ffd23f'; cx.font = '700 12px ui-monospace, monospace'; cx.textAlign = 'left';
@@ -1726,6 +1860,7 @@ function draw(){
     for (const k of G.picks) drawPick(k);
     for (const po of G.pods) drawMechPod(po);
     for (const c of G.cars) drawCarPod(c);
+    for (const h of G.helis) drawHeliPod(h);
     for (const a of G.allies) drawAlly(a);
     for (const e of G.ens) drawEnemy(e);
     drawHero();
