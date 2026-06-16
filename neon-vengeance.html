@@ -294,6 +294,13 @@ function sRocket(){ sweep('square', 180, 520, 0.18, 0.12); }
 function sMech(){ sweep('sawtooth', 90, 360, 0.35, 0.2); sweep('square', 420, 110, 0.4, 0.12); }
 function sMechHit(){ sweep('square', 420, 90, 0.16, 0.22); }
 function sCar(){ sweep('sawtooth', 70, 180, 0.45, 0.2); sweep('square', 150, 320, 0.3, 0.12); }
+function sThunder(){
+  if (!AC || AC.state !== 'running') return;
+  const t = AC.currentTime, n = noiseSrc(t, 0.7), f = AC.createBiquadFilter(), g = AC.createGain();
+  f.type = 'lowpass'; f.frequency.setValueAtTime(420, t); f.frequency.exponentialRampToValueAtTime(60, t + 0.7);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.16, t + 0.05); g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+  n.connect(f); f.connect(g); g.connect(sfxGain);
+}
 function sSolo(){
   // a deep, menacing surge instead of a shrill rising sweep
   sweep('sawtooth', 70, 240, 0.6, 0.24);
@@ -321,7 +328,8 @@ function startRun(){
     ens: [], pbul: [], ebul: [], parts: [], picks: [], texts: [], plats: [],
     allies: [], pods: [], cars: [], flyerT: 0,
     genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500, nextCar: 2500,
-    bossOn: false, dieT: 0, line: ''
+    bossOn: false, dieT: 0, line: '',
+    zone: 0, boltT: 2.5, flashT: 0, boltX: 0
   };
   // pick a fresh soundtrack for the run (never a boss theme)
   setSong(pickRunSong());
@@ -698,6 +706,14 @@ function update(dt){
   g.maxD = Math.max(g.maxD, p.x - 120);
   if (p.soloT <= 0) g.meter = Math.max(0, g.meter - dt * 3);
   genWorld();
+  // zones: announce on entry, fire lightning in storm zones
+  const zi = zoneIdx(g.maxD);
+  if (zi !== g.zone){ g.zone = zi; addText(g.camX + W / 2, 120, '◇ ' + ZONES[zi].name + ' ◇', ZONES[zi].horizon, 2.6); }
+  if (ZONES[zi].light > 0){
+    g.boltT -= dt;
+    if (g.boltT <= 0){ g.boltT = 1.6 + Math.random() * 3.2; g.flashT = 0.18; g.boltX = g.camX + Math.random() * W; sThunder(); }
+  }
+  if (g.flashT > 0) g.flashT -= dt;
 
   // enemies
   for (let i = g.ens.length - 1; i >= 0; i--){
@@ -951,51 +967,94 @@ function rectsHit(x1, y1, w1, h1, x2, y2, w2, h2){
 }
 
 // ============================================================ draw
-let skyGrad = null;
-function buildGrads(){
-  skyGrad = cx.createLinearGradient(0, 0, 0, H);
-  skyGrad.addColorStop(0, '#0b0716');
-  skyGrad.addColorStop(0.42, '#1d0b33');
-  skyGrad.addColorStop(0.62, '#3d1145');
-  skyGrad.addColorStop(0.78, '#12081f');
-  skyGrad.addColorStop(1, '#0a0614');
+// ---- zones: the world evolves with distance, each a distinct synthwave mood
+const ZONE_LEN = 3600; // ~360m per zone before it crossfades into the next
+const ZONES = [
+  { name: 'NEON CITY',
+    sky: ['#0b0716', '#1d0b33', '#3d1145', '#12081f', '#0a0614'],
+    orb: ['#ffd23f', '#ff7b2d', '#ff2d78'], orbA: 1, glow: '#ff5e3a',
+    skyline1: '#160a26', skyline2: '#0e0618', horizon: '#ff2d78',
+    floorTop: '#190b2e', floorBot: '#0a0516', gridH: '#ff2d78', gridV: '#19e3ff', edge: '#19e3ff',
+    star: 0.8, rain: 0, light: 0 },
+  { name: 'OCEAN DRIVE',
+    sky: ['#04121a', '#062b3a', '#0a4a55', '#06212b', '#03121a'],
+    orb: ['#ffe08a', '#ff9f5a', '#ff5e8a'], orbA: 0.95, glow: '#ff8a5a',
+    skyline1: '#06222b', skyline2: '#04161c', horizon: '#19e3ff',
+    floorTop: '#062029', floorBot: '#03121a', gridH: '#19c6ff', gridV: '#39ffd2', edge: '#39ffd2',
+    star: 0.4, rain: 1, light: 0 },
+  { name: 'NIGHT STORM',
+    sky: ['#05060f', '#0b1030', '#161a44', '#0a0c22', '#04050e'],
+    orb: ['#3a4a7a', '#26305a', '#161a3a'], orbA: 0.22, glow: '#3a4a7a',
+    skyline1: '#0a0c22', skyline2: '#060814', horizon: '#6ab0ff',
+    floorTop: '#0a0c20', floorBot: '#04050e', gridH: '#5a7aff', gridV: '#6ab0ff', edge: '#9ecbff',
+    star: 0.5, rain: 0.5, light: 1 },
+  { name: 'CRIMSON MOON',
+    sky: ['#120406', '#2e0810', '#4a0e18', '#1a0608', '#0e0406'],
+    orb: ['#ff8a7a', '#c4304a', '#5a0e2a'], orbA: 1, glow: '#ff3b4a',
+    skyline1: '#250709', skyline2: '#160405', horizon: '#ff3b4a',
+    floorTop: '#1e0708', floorBot: '#0e0406', gridH: '#ff3b4a', gridV: '#ff7b4a', edge: '#ff7b4a',
+    star: 0.7, rain: 0, light: 0 }
+];
+function hx(h){ return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+function mix(a, b, t){ return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+function rgb(c, a){ return a == null ? `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})` : `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; }
+function blendZones(A, B, t){
+  const cm = k => mix(hx(A[k]), hx(B[k]), t);
+  const arr = k => A[k].map((h, i) => mix(hx(h), hx(B[k][i]), t));
+  const n = k => A[k] + (B[k] - A[k]) * t;
+  return { sky: arr('sky'), orb: arr('orb'), orbA: n('orbA'), glow: cm('glow'),
+    skyline1: cm('skyline1'), skyline2: cm('skyline2'), horizon: cm('horizon'),
+    floorTop: cm('floorTop'), floorBot: cm('floorBot'), gridH: cm('gridH'), gridV: cm('gridV'), edge: cm('edge'),
+    starA: n('star'), rain: n('rain'), light: n('light') };
 }
-buildGrads();
+function zoneIdx(d){ const i = Math.floor(d / ZONE_LEN); return ((i % ZONES.length) + ZONES.length) % ZONES.length; }
+function zoneAt(d){
+  const z = d / ZONE_LEN, fl = Math.floor(z), frac = z - fl;
+  const A = ZONES[((fl % ZONES.length) + ZONES.length) % ZONES.length];
+  const B = ZONES[(((fl + 1) % ZONES.length) + ZONES.length) % ZONES.length];
+  return blendZones(A, B, frac < 0.86 ? 0 : (frac - 0.86) / 0.14); // crossfade over the last 14%
+}
+let PAL = zoneAt(0);
 function line(x1, y1, x2, y2){ cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke(); }
 
 function drawSky(camX){
-  cx.fillStyle = skyGrad; cx.fillRect(0, 0, W, H);
+  const P = PAL;
+  // sky gradient
+  const sg = cx.createLinearGradient(0, 0, 0, H);
+  const pos = [0, 0.42, 0.62, 0.78, 1];
+  for (let i = 0; i < 5; i++) sg.addColorStop(pos[i], rgb(P.sky[i]));
+  cx.fillStyle = sg; cx.fillRect(0, 0, W, H);
   // stars
-  cx.fillStyle = 'rgba(255,255,255,.7)';
+  cx.fillStyle = '#fff';
   for (let i = 0; i < 70; i++){
     const sx = (i * 137.7 - camX * 0.02) % W, x = sx < 0 ? sx + W : sx;
     const y = (i * 89.3) % (HORIZON - 40);
     const tw = 0.3 + 0.7 * Math.abs(Math.sin(tt * 1.5 + i));
-    cx.globalAlpha = tw * 0.8;
+    cx.globalAlpha = tw * P.starA;
     cx.fillRect(x, y, i % 7 === 0 ? 2 : 1, i % 7 === 0 ? 2 : 1);
   }
   cx.globalAlpha = 1;
-  // sun
-  const sx = W * 0.64, sy = 218, r = 105;
-  const sg = cx.createLinearGradient(0, sy - r, 0, sy + r);
-  sg.addColorStop(0, '#ffd23f'); sg.addColorStop(0.5, '#ff7b2d'); sg.addColorStop(1, '#ff2d78');
-  cx.save();
-  cx.beginPath(); cx.arc(sx, sy, r, 0, Math.PI * 2); cx.clip();
-  cx.shadowColor = '#ff5e3a'; cx.shadowBlur = 40;
-  cx.fillStyle = sg; cx.fillRect(sx - r, sy - r, r * 2, r * 2);
-  cx.shadowBlur = 0;
-  cx.fillStyle = skyGrad;
-  for (let i = 0; i < 7; i++){
-    const y = sy + 8 + i * (10 + i * 2.4);
-    cx.fillRect(sx - r, y, r * 2, 3 + i * 1.7);
+  // sun / moon
+  if (P.orbA > 0.03){
+    const sx = W * 0.64, sy = 218, r = 105;
+    const og = cx.createLinearGradient(0, sy - r, 0, sy + r);
+    og.addColorStop(0, rgb(P.orb[0])); og.addColorStop(0.5, rgb(P.orb[1])); og.addColorStop(1, rgb(P.orb[2]));
+    cx.save();
+    cx.globalAlpha = P.orbA;
+    cx.beginPath(); cx.arc(sx, sy, r, 0, Math.PI * 2); cx.clip();
+    cx.shadowColor = rgb(P.glow); cx.shadowBlur = 40;
+    cx.fillStyle = og; cx.fillRect(sx - r, sy - r, r * 2, r * 2);
+    cx.shadowBlur = 0;
+    cx.globalAlpha = 1; cx.fillStyle = sg; // scanline cutouts blend back to sky
+    for (let i = 0; i < 7; i++){ const y = sy + 8 + i * (10 + i * 2.4); cx.fillRect(sx - r, y, r * 2, 3 + i * 1.7); }
+    cx.restore();
   }
-  cx.restore();
   // skylines
-  drawSkyline(camX, 0.12, HORIZON + 4, '#160a26', 120, 90, 17);
-  drawSkyline(camX, 0.28, HORIZON + 4, '#0e0618', 90, 130, 31);
+  drawSkyline(camX, 0.12, HORIZON + 4, rgb(P.skyline1), 120, 90, 17);
+  drawSkyline(camX, 0.28, HORIZON + 4, rgb(P.skyline2), 90, 130, 31);
   // horizon glow
-  cx.strokeStyle = '#ff2d78'; cx.lineWidth = 2;
-  cx.shadowColor = '#ff2d78'; cx.shadowBlur = 12;
+  cx.strokeStyle = rgb(P.horizon); cx.lineWidth = 2;
+  cx.shadowColor = rgb(P.horizon); cx.shadowBlur = 12;
   line(0, HORIZON + 4, W, HORIZON + 4);
   cx.shadowBlur = 0;
 }
@@ -1022,42 +1081,54 @@ function drawSkyline(camX, par, baseY, col, sp, hmax, seed){
   }
 }
 function drawFloor(camX){
+  const P = PAL;
   // floor band
   const fg = cx.createLinearGradient(0, GROUND, 0, H);
-  fg.addColorStop(0, '#190b2e'); fg.addColorStop(1, '#0a0516');
+  fg.addColorStop(0, rgb(P.floorTop)); fg.addColorStop(1, rgb(P.floorBot));
   cx.fillStyle = fg; cx.fillRect(0, GROUND, W, H - GROUND);
   // mid band between horizon and floor: faint haze
   const hz2 = cx.createLinearGradient(0, HORIZON, 0, GROUND);
-  hz2.addColorStop(0, 'rgba(255,45,120,.07)'); hz2.addColorStop(1, 'rgba(0,0,0,0)');
+  hz2.addColorStop(0, rgb(P.gridH, 0.07)); hz2.addColorStop(1, 'rgba(0,0,0,0)');
   cx.fillStyle = hz2; cx.fillRect(0, HORIZON, W, GROUND - HORIZON);
   // grid: horizontal depth lines
   cx.lineWidth = 1.5;
   for (let i = 1; i <= 6; i++){
     const f = i / 6, y = GROUND + (H - GROUND) * f * f;
-    cx.strokeStyle = `rgba(255,45,120,${0.25 + f * 0.45})`;
+    cx.strokeStyle = rgb(P.gridH, 0.25 + f * 0.45);
     line(0, y, W, y);
   }
   // grid: vertical lines fanning toward bottom
   const sp = 88, off = ((camX % sp) + sp) % sp;
-  cx.strokeStyle = 'rgba(25,227,255,.4)';
+  cx.strokeStyle = rgb(P.gridV, 0.4);
   for (let k = -1; k <= W / sp + 1; k++){
     const topX = k * sp - off;
     const botX = W / 2 + (topX - W / 2) * 1.45;
     line(topX, GROUND, botX, H);
   }
   // floor edge
-  cx.strokeStyle = '#19e3ff'; cx.lineWidth = 2;
-  cx.shadowColor = '#19e3ff'; cx.shadowBlur = 8;
+  cx.strokeStyle = rgb(P.edge); cx.lineWidth = 2;
+  cx.shadowColor = rgb(P.edge); cx.shadowBlur = 8;
   line(0, GROUND, W, GROUND);
   cx.shadowBlur = 0;
+}
+function drawWeather(){
+  const P = PAL;
+  if (P.rain > 0.02){ // diagonal rain streaks, parallax behind gameplay
+    cx.strokeStyle = `rgba(160,205,255,${0.32 * P.rain})`; cx.lineWidth = 1.5;
+    for (let i = 0; i < 70; i++){
+      const ph = ((tt / 0.85) + i * 0.137) % 1;
+      const x = ((i * 139.7) + ph * 40) % W, y = -20 + ph * (H + 40);
+      cx.beginPath(); cx.moveTo(x, y); cx.lineTo(x - 6, y + 16); cx.stroke();
+    }
+  }
 }
 function drawPlat(pl, camX){
   const x = pl.x - camX;
   if (x + pl.w < -20 || x > W + 20) return;
   cx.fillStyle = 'rgba(15,9,30,.92)';
   cx.fillRect(x, pl.y, pl.w, 10);
-  cx.strokeStyle = '#ff2d78'; cx.lineWidth = 2;
-  cx.shadowColor = '#ff2d78'; cx.shadowBlur = 8;
+  cx.strokeStyle = rgb(PAL.horizon); cx.lineWidth = 2;
+  cx.shadowColor = rgb(PAL.horizon); cx.shadowBlur = 8;
   cx.strokeRect(x, pl.y, pl.w, 10);
   cx.shadowBlur = 0;
 }
@@ -1632,6 +1703,7 @@ function drawPaused(){
   cx.fillText('P  resume      R  reset      M  mute', W / 2, 322);
 }
 function draw(){
+  PAL = zoneAt(state === 'title' || !G ? 0 : G.maxD); // current zone palette for this frame
   cx.save();
   if (shake > 0.3 && state !== 'dead')
     cx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
@@ -1639,7 +1711,7 @@ function draw(){
     drawTitle();
   } else {
     const camX = G.camX;
-    drawSky(camX); drawFloor(camX);
+    drawSky(camX); drawFloor(camX); drawWeather();
     for (const pl of G.plats) drawPlat(pl, camX);
     for (const k of G.picks) drawPick(k);
     for (const po of G.pods) drawMechPod(po);
@@ -1649,6 +1721,17 @@ function draw(){
     drawHero();
     drawBullets();
     drawFx();
+    // lightning flash in storm zones
+    if (G.flashT > 0){
+      const a = G.flashT / 0.18;
+      cx.fillStyle = `rgba(200,225,255,${0.42 * a})`; cx.fillRect(0, 0, W, H);
+      let xx = G.boltX - camX, yy = 0;
+      cx.strokeStyle = `rgba(225,238,255,${0.9 * a})`; cx.lineWidth = 2;
+      cx.shadowColor = '#9ecbff'; cx.shadowBlur = 12;
+      cx.beginPath(); cx.moveTo(xx, 0);
+      for (let s = 0; s < 6; s++){ yy += HORIZON / 6; xx += Math.sin(s * 9.7 + G.boltX) * 18; cx.lineTo(xx, yy); }
+      cx.stroke(); cx.shadowBlur = 0;
+    }
     // mid-boss bathes the grid in hostile red light
     if (G.bossOn){
       cx.fillStyle = `rgba(150,10,45,${0.14 + 0.05 * Math.sin(tt * 4)})`;
