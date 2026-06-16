@@ -329,7 +329,8 @@ function startRun(){
     allies: [], pods: [], cars: [], flyerT: 0,
     genX: 420, spawnX: 760, nextStalker: 2000, nextBoss: 1200, nextAlly: 3200, nextGunship: 3500, nextCar: 2500,
     bossOn: false, dieT: 0, line: '',
-    zone: 0, boltT: 2.5, flashT: 0, boltX: 0
+    zone: 0, boltT: 2.5, flashT: 0, boltX: 0,
+    kills: 0, bosses: 0, runT: 0
   };
   // pick a fresh soundtrack for the run (never a boss theme)
   setSong(pickRunSong());
@@ -519,6 +520,8 @@ function hurt(fromX){
 }
 function killEnemy(e, i){
   G.ens.splice(i, 1);
+  G.kills++;
+  if (e.type === 'stalker' || e.type === 'midboss') G.bosses++;
   const beefy = e.type === 'stalker' || e.type === 'heavy' || e.type === 'midboss';
   sBoom(beefy);
   shake = Math.min(16, shake + (e.type === 'stalker' || e.type === 'midboss' ? 12 : e.type === 'flyer' ? 2 : 4));
@@ -654,6 +657,7 @@ function ejectCar(){
 function update(dt){
   const g = G, p = g.p;
   tt += dt;
+  if (state === 'play' && !paused) g.runT += dt;
   if (state === 'dying'){
     g.dieT -= dt;
     updateFx(dt * 0.35);
@@ -924,6 +928,7 @@ function hitGunship(e, j, b){
 }
 function killGunship(e, idx){
   G.ens.splice(idx, 1);
+  G.kills++; G.bosses++;
   sBoom(true); shake = 18;
   for (let k = 0; k < 6; k++) ring(e.x + (Math.random() - 0.5) * 120, e.y + (Math.random() - 0.5) * 50, ['#ff5e3a', '#ffd23f', '#c44dff', '#fff'][k % 4]);
   burst(e.x, e.y, 80, ['#ff5e3a', '#ffd23f', '#c44dff', '#fff'], 420);
@@ -1687,6 +1692,11 @@ function drawDead(){
   cx.font = '700 14px ui-monospace, monospace';
   cx.fillStyle = G.score >= hi && G.score > 0 ? '#ffd23f' : 'rgba(232,228,240,.6)';
   cx.fillText(G.score >= hi && G.score > 0 ? '★ NEW HIGH SCORE ★' : 'HI ' + String(hi).padStart(7, '0'), W / 2, 332);
+  // discreet run stats
+  const s = G.runT | 0, tstr = (s / 60 | 0) + ':' + String(s % 60).padStart(2, '0');
+  cx.font = '700 12px ui-monospace, monospace';
+  cx.fillStyle = 'rgba(232,228,240,.45)';
+  cx.fillText(tstr + '   ·   ' + (G.maxD / 10 | 0) + 'm   ·   ' + G.kills + ' kills   ·   ' + G.bosses + ' bosses', W / 2, 360);
   if (((tt * 1.6) | 0) % 2){
     cx.fillStyle = '#19e3ff';
     cx.fillText('ENTER  run it back      ESC  title', W / 2, 396);
